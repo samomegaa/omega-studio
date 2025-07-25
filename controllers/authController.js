@@ -1,0 +1,545 @@
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const pool = require('../config/db');
+
+// Generate JWT Token
+const generateToken = (userId, email) => {
+  return jwt.sign(
+    { userId, email },
+    process.env.JWT_SECRET || 'your-secret-key',
+    { expiresIn: '24h' }
+  );
+};
+
+// Login
+exports.login = async (req, res) => {
+  const { emailOrUsername, password } = req.body;
+  
+  try {
+    // Get user with roles - now checking both email AND username
+    const userResult = await pool.query(`
+      SELECT 
+        u.id, u.username, u.email, u.password, u.full_name, 
+        u.status, u.failed_login_attempts, u.lockout_until,
+        array_agg(DISTINCT r.name) as roles,
+        array_agg(DISTINCT d.id) as department_ids
+      FROM users u
+      LEFT JOIN user_roles ur ON u.id = ur.user_id
+      LEFT JOIN roles r ON ur.role_id = r.id
+      LEFT JOIN user_departments ud ON u.id = ud.user_id
+      LEFT JOIN departments d ON ud.department_id = d.id
+      WHERE u.email = $1 OR u.username = $1
+      GROUP BY u.id
+    `, [emailOrUsername.toLowerCase()]);  // Changed from just email to emailOrUsername
+    
+    if (userResult.rows.length === 0) {
+      return res.status(401).json({ message: 'Invalid credentials' });
+    }
+    
+    const user = userResult.rows[0];
+
+
+  
+    // Check if account is locked
+    if (user.lockout_until && new Date(user.lockout_until) > new Date()) {
+      return res.status(401).json({ message: 'Account is locked. Please try again later.' });
+    }
+    
+    // Check password
+    const isValidPassword = await bcrypt.compare(password, user.password);
+    
+    if (!isValidPassword) {
+      // Update failed login attempts
+      await pool.query(
+        'UPDATE users SET failed_login_attempts = failed_login_attempts + 1 WHERE id = $1',
+        [user.id]
+      );
+      
+      // Lock account after 5 failed attempts
+      if (user.failed_login_attempts >= 4) {
+        await pool.query(
+          'UPDATE users SET lockout_until = NOW() + INTERVAL \'30 minutes\' WHERE id = $1',
+          [user.id]
+        );
+      }
+      
+      return res.status(401).json({ message: 'Invalid credentials' });
+    }
+    
+    // Reset failed login attempts on successful login
+    await pool.query(
+      'UPDATE users SET failed_login_attempts = 0, last_login = NOW() WHERE id = $1',
+      [user.id]
+    );
+    
+    // Create token
+    const token = jwt.sign(
+      { id: user.id, email: user.email },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+    
+    res.json({
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        full_name: user.full_name,
+        roles: user.roles || [],
+        department_ids: user.department_ids || [],
+        role: user.roles?.[0] || 'staff'
+      }
+    });
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ message: 'Error during login' });
+  }
+};  // <-- This closes the login function
+
+// Register
+exports.register = async (req, res) => {
+  const { username, email, password, full_name, phone } = req.body;
+  const { user: requestingUser } = req; // Get the requesting user (if any)
+  
+  // Add validation
+  if (!username || !email || !password) {
+    return res.status(400).json({ message: 'Username, email and password are required' });
+  }
+  
+  if (password.length < 6) {
+    return res.status(400).json({ message: 'Password must be at least 6 characters' });
+  }
+  
+  const client = await pool.connect();
+  
+  try {
+    await pool.query('BEGIN');
+    
+    // Check if user exists - make it case insensitive
+    const existingUser = await pool.query(
+      'SELECT id FROM users WHERE LOWER(email) = LOWER($1) OR LOWER(username) = LOWER($2)',
+      [email, username]
+    );
+    
+    if (existingUser.rows.length > 0) {
+      return res.status(400).json({ message: 'User with this email or username already exists' });
+    }
+    
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, parseInt(process.env.BCRYPT_ROUNDS) || 12);
+    
+    // Check if this is admin creating a user or self-registration
+    const isAdminCreating = requestingUser && (requestingUser.role === 'admin' || requestingUser.roles?.includes('admin'));
+    
+    // Create user - status depends on who's creating
+    const userResult = await pool.query(`
+      INSERT INTO users (username, email, password, full_name, phone, status)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING id, username, email, full_name
+    `, [username.toLowerCase(), email.toLowerCase(), hashedPassword, full_name, phone, 
+        isAdminCreating ? 'active' : 'pending']);  // Active if admin, pending if self-registration
+     
+    const newUser = userResult.rows[0];
+    
+    if (isAdminCreating) {
+      // Admin creating user - assign user role and return token
+      await pool.query(
+        'INSERT INTO user_roles (user_id, role_id) SELECT $1, id FROM roles WHERE name = $2',
+        [newUser.id, 'user']
+      );
+      
+      await pool.query('COMMIT');
+      
+      const token = jwt.sign(
+        { id: newUser.id, email: newUser.email },
+        process.env.JWT_SECRET,
+        { expiresIn: '7d' }
+      );
+      
+      res.status(201).json({
+        message: 'User created successfully',
+        token,
+        user: newUser
+      });
+    } else {
+      // Self-registration - assign staff role and require approval
+      const staffRole = await pool.query(
+        'SELECT id FROM roles WHERE name = $1',
+        ['staff']
+      );
+      
+      if (staffRole.rows.length > 0) {
+        await pool.query(
+          'INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)',
+          [newUser.id, staffRole.rows[0].id]
+        );
+      }
+      
+      await pool.query('COMMIT');
+      
+      res.status(201).json({
+        message: 'Registration successful. Please wait for admin approval.',
+        user: {
+          id: newUser.id,
+          username: newUser.username,
+          email: newUser.email,
+          fullName: newUser.full_name
+        }
+        // No token for self-registration
+      });
+    }
+  } catch (error) {
+    await pool.query('ROLLBACK');
+    console.error('Registration error:', error);
+    res.status(500).json({ message: 'Error during registration' });
+  } finally {
+    client.release();
+  }
+};
+
+// Add this function after the existing register function
+// This is specifically for admin-created users through the user management interface
+exports.createUser = async (req, res) => {
+  const { username, email, password, full_name, phone, roles, departments, status } = req.body;
+  
+  const client = await pool.connect();
+  
+  try {
+    await pool.query('BEGIN');
+    
+    // Check if user exists
+    const existingUser = await pool.query(
+      'SELECT id FROM users WHERE email = $1 OR username = $2',
+      [email, username]
+    );
+    
+    if (existingUser.rows.length > 0) {
+      return res.status(400).json({ message: 'User already exists' });
+    }
+    
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+    
+    // Create user with specified status
+    const userResult = await pool.query(`
+      INSERT INTO users (username, email, password, full_name, phone, status)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING id
+    `, [username, email, hashedPassword, full_name, phone, status || 'active']);
+    
+    const userId = userResult.rows[0].id;
+    
+    // Assign roles
+    if (roles && roles.length > 0) {
+      for (const roleId of roles) {
+        await pool.query(
+          'INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)',
+          [userId, roleId]
+        );
+      }
+    }
+    
+    // Always ensure staff role
+    const staffRole = await pool.query('SELECT id FROM roles WHERE name = $1', ['staff']);
+    if (staffRole.rows.length > 0 && (!roles || !roles.includes(staffRole.rows[0].id))) {
+      await pool.query(
+        'INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)',
+        [userId, staffRole.rows[0].id]
+      );
+    }
+    
+    // Assign departments
+    if (departments && departments.length > 0) {
+      for (const deptId of departments) {
+        await pool.query(
+          'INSERT INTO user_departments (user_id, department_id) VALUES ($1, $2)',
+          [userId, deptId]
+        );
+      }
+    }
+    
+    await pool.query('COMMIT');
+    
+    res.status(201).json({ 
+      message: 'User created successfully',
+      userId: userId
+    });
+  } catch (error) {
+    await pool.query('ROLLBACK');
+    console.error('Error creating user:', error);
+    res.status(500).json({ message: 'Error creating user' });
+  } finally {
+    client.release();
+  }
+};
+
+
+// Logout
+exports.logout = async (req, res) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    
+    if (token) {
+      // Add token to blacklist
+      await pool.query(
+        'INSERT INTO blacklisted_tokens (token, user_id, expires_at) VALUES ($1, $2, NOW() + INTERVAL \'24 hours\')',
+        [token, req.userId]
+      );
+    }
+    
+    res.json({ message: 'Logged out successfully' });
+  } catch (error) {
+    console.error('Logout error:', error);
+    res.status(500).json({ message: 'Error during logout' });
+  }
+};
+
+// Get current user
+exports.getMe = async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        u.id, u.username, u.email, u.full_name, u.phone, u.status,
+        array_agg(DISTINCT r.name) as roles,
+        array_agg(DISTINCT d.id) as department_ids
+      FROM users u
+      LEFT JOIN user_roles ur ON u.id = ur.user_id
+      LEFT JOIN roles r ON ur.role_id = r.id
+      LEFT JOIN user_departments ud ON u.id = ud.user_id
+      LEFT JOIN departments d ON ud.department_id = d.id
+      WHERE u.id = $1
+      GROUP BY u.id
+    `, [req.userId]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    const user = result.rows[0];
+    const roles = user.roles.filter(r => r !== null);
+    const departmentIds = user.department_ids.filter(d => d !== null);
+    
+
+res.json({
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      full_name: user.full_name,  // Changed from fullName
+      phone: user.phone,
+      status: user.status,
+      roles: roles,
+      role: roles[0] || 'staff',  // Added this field
+      departments: departmentIds,
+      department_ids: departmentIds
+    });
+  } catch (error) {
+    console.error('Get me error:', error);
+    res.status(500).json({ message: 'Server error' });   
+
+  }
+};
+
+const crypto = require('crypto');
+const nodemailer = require('nodemailer'); // You'll need to install this: npm install nodemailer
+
+// Create email transporter (configure with your SMTP settings)
+const createTransporter = () => {
+  return nodemailer.createTransport({
+    host: process.env.SMTP_HOST || 'smtp.gmail.com',
+    port: process.env.SMTP_PORT || 587,
+    secure: false, // true for 465, false for other ports
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS
+    }
+  });
+};
+
+exports.forgotPassword = async (req, res) => {
+  try {
+    const { email } = req.body;
+    
+    if (!email) {
+      return res.status(400).json({ message: 'Email is required' });
+    }
+    
+    // Always return the same message to prevent email enumeration
+    const successMessage = 'If an account exists with this email, password reset instructions have been sent.';
+    
+    // Check if user exists
+    const result = await pool.query(
+      'SELECT id, email, full_name, username FROM users WHERE LOWER(email) = LOWER($1)',
+      [email]
+    );
+    
+    if (result.rows.length === 0) {
+      // Don't reveal that the email doesn't exist
+      return res.json({ message: successMessage });
+    }
+    
+    const user = result.rows[0];
+    
+    // Check if there's a recent reset request (rate limiting)
+    const recentReset = await pool.query(
+      'SELECT reset_token_expiry FROM users WHERE id = $1 AND reset_token_expiry > NOW() - INTERVAL \'5 minutes\'',
+      [user.id]
+    );
+    
+    if (recentReset.rows.length > 0) {
+      return res.json({ message: successMessage });
+    }
+    
+    // Generate secure reset token
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const hashedToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+    const resetTokenExpiry = new Date(Date.now() + 3600000); // 1 hour
+    
+    // Save hashed token to database
+    await pool.query(
+      'UPDATE users SET reset_token = $1, reset_token_expiry = $2 WHERE id = $3',
+      [hashedToken, resetTokenExpiry, user.id]
+    );
+    
+    // Construct reset URL
+    const resetUrl = `${process.env.FRONTEND_URL || 'https://omegastudioakure.com'}/reset-password?token=${resetToken}`;
+    
+    // Email content
+    const emailHtml = `
+      <h2>Password Reset Request</h2>
+      <p>Hello ${user.full_name || user.username},</p>
+      <p>You requested to reset your password for Omega Studio.</p>
+      <p>Please click the link below to reset your password:</p>
+      <a href="${resetUrl}" style="display: inline-block; padding: 12px 24px; background-color: #7c3aed; color: white; text-decoration: none; border-radius: 4px;">Reset Password</a>
+      <p>Or copy and paste this link in your browser:</p>
+      <p>${resetUrl}</p>
+      <p>This link will expire in 1 hour.</p>
+      <p>If you didn't request this, please ignore this email.</p>
+      <br>
+      <p>Best regards,<br>Omega Studio Team</p>
+    `;
+    
+    // Send email
+    try {
+      const transporter = createTransporter();
+      await transporter.sendMail({
+        from: process.env.SMTP_FROM || '"Omega Studio" <noreply@omegastudioakure.com>',
+        to: user.email,
+        subject: 'Password Reset - Omega Studio',
+        html: emailHtml,
+        text: `Password Reset Request\n\nHello ${user.full_name || user.username},\n\nPlease visit this link to reset your password: ${resetUrl}\n\nThis link will expire in 1 hour.\n\nBest regards,\nOmega Studio Team`
+      });
+    } catch (emailError) {
+      console.error('Email sending error:', emailError);
+      // Log the error but don't reveal email issues to the user
+      
+      // Optional: Save to a queue for retry
+      await pool.query(
+        'INSERT INTO email_queue (to_email, subject, body, status) VALUES ($1, $2, $3, $4)',
+        [user.email, 'Password Reset', emailHtml, 'pending']
+      ).catch(err => console.error('Queue error:', err));
+    }
+    
+    res.json({ message: successMessage });
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    res.status(500).json({ message: 'Error processing request. Please try again later.' });
+  }
+};
+
+exports.resetPassword = async (req, res) => {
+  try {
+    const { token, newPassword } = req.body;
+    
+    if (!token || !newPassword) {
+      return res.status(400).json({ message: 'Token and new password are required' });
+    }
+    
+    if (newPassword.length < 6) {
+      return res.status(400).json({ message: 'Password must be at least 6 characters' });
+    }
+    
+    // Hash the provided token to compare with database
+    const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+    
+    // Find user with valid token
+    const result = await pool.query(
+      'SELECT id, email FROM users WHERE reset_token = $1 AND reset_token_expiry > NOW()',
+      [hashedToken]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(400).json({ message: 'Invalid or expired reset token' });
+    }
+    
+    const user = result.rows[0];
+    
+    // Check if new password is different from current password
+    const currentPassword = await pool.query(
+      'SELECT password FROM users WHERE id = $1',
+      [user.id]
+    );
+    
+    const isSamePassword = await bcrypt.compare(newPassword, currentPassword.rows[0].password);
+    if (isSamePassword) {
+      return res.status(400).json({ message: 'New password must be different from current password' });
+    }
+    
+    // Hash new password
+    const hashedPassword = await bcrypt.hash(newPassword, parseInt(process.env.BCRYPT_ROUNDS) || 12);
+    
+    // Update password and clear reset token
+    await pool.query(
+      'UPDATE users SET password = $1, reset_token = NULL, reset_token_expiry = NULL, last_password_change = NOW(), updated_at = NOW() WHERE id = $2',
+      [hashedPassword, user.id]
+    );
+    
+    // Send confirmation email
+    try {
+      const transporter = createTransporter();
+      await transporter.sendMail({
+        from: process.env.SMTP_FROM || '"Omega Studio" <noreply@omegastudioakure.com>',
+        to: user.email,
+        subject: 'Password Changed - Omega Studio',
+        html: `
+          <h2>Password Changed Successfully</h2>
+          <p>Your password has been successfully changed.</p>
+          <p>If you didn't make this change, please contact us immediately.</p>
+          <br>
+          <p>Best regards,<br>Omega Studio Team</p>
+        `
+      });
+    } catch (emailError) {
+      console.error('Confirmation email error:', emailError);
+      // Continue even if email fails
+    }
+    
+    res.json({ message: 'Password reset successful. You can now login with your new password.' });
+  } catch (error) {
+    console.error('Reset password error:', error);
+    res.status(500).json({ message: 'Error resetting password. Please try again later.' });
+  }
+};
+
+// Optional: Add a function to verify reset token validity (for frontend)
+exports.verifyResetToken = async (req, res) => {
+  try {
+    const { token } = req.params;
+    
+    if (!token) {
+      return res.status(400).json({ valid: false });
+    }
+    
+    const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+    
+    const result = await pool.query(
+      'SELECT id FROM users WHERE reset_token = $1 AND reset_token_expiry > NOW()',
+      [hashedToken]
+    );
+    
+    res.json({ valid: result.rows.length > 0 });
+  } catch (error) {
+    console.error('Verify token error:', error);
+    res.status(500).json({ valid: false });
+  }
+};

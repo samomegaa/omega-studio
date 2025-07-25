@@ -1,0 +1,697 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  Box,
+  Button,
+  Paper,
+  Typography,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Grid,
+  TextField,
+  MenuItem,
+  FormControl,
+  InputLabel,
+  Select,
+  Alert,
+  Chip,
+  Card,
+  CardContent,
+  CardActions,
+  IconButton,
+  Tooltip,
+  List,
+  ListItem,
+  ListItemText,
+  ListItemIcon,
+  Divider,
+  Tab,
+  Tabs,
+  CircularProgress
+} from '@mui/material';
+import {
+  Add,
+  CalendarToday,
+  MusicNote,
+  CameraAlt,
+  Videocam,
+  AccessTime,
+  AttachMoney,
+  Person,
+  Business,
+  Cancel,
+  Edit,
+  Refresh,
+  EventAvailable,
+  Schedule
+} from '@mui/icons-material';
+import { Calendar, momentLocalizer } from 'react-big-calendar';
+import moment from 'moment';
+import 'react-big-calendar/lib/css/react-big-calendar.css';
+import { useAuth } from '../contexts/AuthContext';
+import api from '../services/api';
+
+const localizer = momentLocalizer(moment);
+
+function TabPanel({ children, value, index }) {
+  return (
+    <div hidden={value !== index}>
+      {value === index && <Box sx={{ p: 3 }}>{children}</Box>}
+    </div>
+  );
+}
+
+function Bookings() {
+  const { user } = useAuth();
+  const [studios, setStudios] = useState([]);
+  const [bookings, setBookings] = useState([]);
+  const [projects, setProjects] = useState([]);
+  const [clients, setClients] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedStudio, setSelectedStudio] = useState(null);
+  const [selectedDate, setSelectedDate] = useState(new Date());
+  const [openDialog, setOpenDialog] = useState(false);
+  const [editingBooking, setEditingBooking] = useState(null);
+  const [message, setMessage] = useState({ type: '', text: '' });
+  const [tabValue, setTabValue] = useState(0);
+  const [calendarView, setCalendarView] = useState('month');
+  
+  const [formData, setFormData] = useState({
+    studio_id: '',
+    project_id: '',
+    client_id: '',
+    start_time: '',
+    end_time: '',
+    purpose: '',
+    notes: ''
+  });
+
+  const studioTypeIcons = {
+    recording: <MusicNote />,
+    photo: <CameraAlt />,
+    video: <Videocam />
+  };
+
+  const studioTypeColors = {
+    recording: '#2196f3',
+    photo: '#4caf50',
+    video: '#ff9800'
+  };
+
+  useEffect(() => {
+    fetchStudios();
+    fetchBookings();
+    fetchProjects();
+    fetchClients();
+  }, []);
+
+  const fetchStudios = async () => {
+    try {
+      const response = await api.get('/bookings/studios');
+      setStudios(response.data);
+      if (response.data.length > 0 && !selectedStudio) {
+        setSelectedStudio(response.data[0].id);
+      }
+    } catch (error) {
+      console.error('Error fetching studios:', error);
+      setMessage({ type: 'error', text: 'Failed to load studios' });
+    }
+  };
+
+  const fetchBookings = async () => {
+    try {
+      setLoading(true);
+      const response = await api.get('/bookings');
+      setBookings(response.data);
+    } catch (error) {
+      console.error('Error fetching bookings:', error);
+      setMessage({ type: 'error', text: 'Failed to load bookings' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchProjects = async () => {
+    try {
+      const response = await api.get('/projects');
+      setProjects(response.data);
+    } catch (error) {
+      console.error('Error fetching projects:', error);
+    }
+  };
+
+  const fetchClients = async () => {
+    try {
+      const response = await api.get('/clients');
+      setClients(response.data);
+    } catch (error) {
+      console.error('Error fetching clients:', error);
+    }
+  };
+
+  
+
+
+
+
+const handleOpenDialog = (slotInfo = null, booking = null) => {
+    if (booking) {
+      setEditingBooking(booking);
+      
+      // Handle date formatting for edit form
+      let startDateTime, endDateTime;
+      
+      try {
+        if (booking.date) {
+          const dateOnly = booking.date.split('T')[0];
+          
+          // Extract just the time part
+          let startTime = booking.start_time;
+          let endTime = booking.end_time;
+          
+          if (startTime.includes('T')) {
+            startTime = startTime.split('T')[1];
+          }
+          if (endTime.includes('T')) {
+            endTime = endTime.split('T')[1];
+          }
+          
+          // Get just HH:mm
+          startTime = startTime.substring(0, 5);
+          endTime = endTime.substring(0, 5);
+          
+          startDateTime = `${dateOnly}T${startTime}`;
+          endDateTime = `${dateOnly}T${endTime}`;
+        } else {
+          // Fallback
+          startDateTime = moment(booking.start_time).format('YYYY-MM-DDTHH:mm');
+          endDateTime = moment(booking.end_time).format('YYYY-MM-DDTHH:mm');
+        }
+      } catch (error) {
+        console.error('Error formatting dates for form:', error);
+        startDateTime = '';
+        endDateTime = '';
+      }
+      
+      setFormData({
+        studio_id: booking.studio_id,
+        project_id: booking.project_id || '',
+        client_id: booking.client_id || '',
+        start_time: startDateTime,
+        end_time: endDateTime,
+        purpose: booking.purpose || '',
+        notes: booking.notes || ''
+      });
+    } else if (slotInfo) {
+      setEditingBooking(null);
+      const start = moment(slotInfo.start);
+      const end = slotInfo.end ? moment(slotInfo.end) : moment(slotInfo.start).add(1, 'hour');
+      
+      setFormData({
+        studio_id: selectedStudio || '',
+        project_id: '',
+        client_id: '',
+        start_time: start.format('YYYY-MM-DDTHH:mm'),
+        end_time: end.format('YYYY-MM-DDTHH:mm'),
+        purpose: '',
+        notes: ''
+      });
+    }
+    setOpenDialog(true);
+  };
+
+
+
+
+  const handleCloseDialog = () => {
+    setOpenDialog(false);
+    setEditingBooking(null);
+  };
+
+  const handleSubmit = async () => {
+    try {
+      if (!formData.studio_id || !formData.start_time || !formData.end_time) {
+        setMessage({ type: 'error', text: 'Please fill in all required fields' });
+        return;
+      }
+
+      // Validate time
+      const start = new Date(formData.start_time);
+      const end = new Date(formData.end_time);
+      
+      if (end <= start) {
+        setMessage({ type: 'error', text: 'End time must be after start time' });
+        return;
+      }
+
+      const bookingData = {
+        ...formData,
+        project_id: formData.project_id || null,
+        client_id: formData.client_id || null
+      };
+
+      if (editingBooking) {
+        await api.put(`/bookings/${editingBooking.id}`, bookingData);
+        setMessage({ type: 'success', text: 'Booking updated successfully' });
+      } else {
+        await api.post('/bookings', bookingData);
+        setMessage({ type: 'success', text: 'Booking created successfully' });
+      }
+      
+      handleCloseDialog();
+      fetchBookings();
+    } catch (error) {
+      setMessage({ 
+        type: 'error', 
+        text: error.response?.data?.message || 'Operation failed' 
+      });
+    }
+  };
+
+  const handleCancelBooking = async (bookingId) => {
+    if (window.confirm('Are you sure you want to cancel this booking?')) {
+      try {
+        await api.put(`/bookings/${bookingId}/cancel`);
+        setMessage({ type: 'success', text: 'Booking cancelled successfully' });
+        fetchBookings();
+      } catch (error) {
+        setMessage({ type: 'error', text: 'Failed to cancel booking' });
+      }
+    }
+  };
+
+  // Transform bookings for calendar
+  const calendarEvents = bookings
+    .filter(booking => !selectedStudio || booking.studio_id === selectedStudio)
+    .filter(booking => booking.status !== 'cancelled')
+    .map(booking => {
+      try {
+        // Now start_time and end_time are already in ISO format
+        const startDate = new Date(booking.start_time);
+        const endDate = new Date(booking.end_time);
+        
+        // Validate dates
+        if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+          console.error('Invalid date for booking:', booking);
+          return null;
+        }
+        
+        return {
+          id: booking.id,
+          title: `${booking.purpose || 'Booking'} - ${booking.booked_by_name || booking.booked_by_username}`,
+          start: startDate,
+          end: endDate,
+          resource: booking,
+          color: studioTypeColors[booking.studio_type] || '#2196f3'
+        };
+      } catch (error) {
+        console.error('Error parsing booking dates:', error, booking);
+        return null;
+      }
+    })
+    .filter(event => event !== null);
+
+        
+    const eventStyleGetter = (event) => {
+    return {
+      style: {
+        backgroundColor: event.color,
+        borderRadius: '5px',
+        opacity: 0.8,
+        color: 'white',
+        border: '0px',
+        display: 'block'
+      }
+    };
+  };
+  const handleSelectEvent = (event) => {
+    handleOpenDialog(null, event.resource);
+  };
+
+  const handleSelectSlot = (slotInfo) => {
+    if (tabValue === 0) { // Only allow slot selection in calendar view
+      handleOpenDialog(slotInfo);
+    }
+  };
+  const CustomToolbar = ({ label, onNavigate, onView }) => (
+    <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+      <Box display="flex" alignItems="center" gap={1}>
+        <IconButton onClick={() => onNavigate('PREV')}>
+          <CalendarToday />
+        </IconButton>
+        <Typography variant="h6">{label}</Typography>
+        <IconButton onClick={() => onNavigate('NEXT')}>
+          <CalendarToday />
+        </IconButton>
+      </Box>
+      <Box>
+        <Button onClick={() => onView('month')} variant={calendarView === 'month' ? 'contained' : 'outlined'} size="small">
+          Month
+        </Button>
+        <Button onClick={() => onView('week')} variant={calendarView === 'week' ? 'contained' : 'outlined'} size="small" sx={{ ml: 1 }}>
+          Week
+        </Button>
+        <Button onClick={() => onView('day')} variant={calendarView === 'day' ? 'contained' : 'outlined'} size="small" sx={{ ml: 1 }}>
+          Day
+        </Button>
+      </Box>
+    </Box>
+  );
+
+  return (
+    <Box>
+      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
+        <Typography variant="h4">Studio Bookings</Typography>
+        <Box>
+          <Button
+            variant="contained"
+            startIcon={<Add />}
+            onClick={() => handleOpenDialog({ start: new Date() })}
+            sx={{ mr: 1 }}
+          >
+            New Booking
+          </Button>
+          <IconButton onClick={fetchBookings} color="primary">
+            <Refresh />
+          </IconButton>
+        </Box>
+      </Box>
+
+      {message.text && (
+        <Alert severity={message.type} onClose={() => setMessage({ type: '', text: '' })} sx={{ mb: 2 }}>
+          {message.text}
+        </Alert>
+      )}
+
+      {/* Studio Selection */}
+      <Grid container spacing={2} sx={{ mb: 3 }}>
+        {studios.map(studio => (
+          <Grid item xs={12} sm={6} md={4} key={studio.id}>
+            <Card 
+              sx={{ 
+                cursor: 'pointer',
+                border: selectedStudio === studio.id ? '2px solid' : '1px solid #e0e0e0',
+                borderColor: selectedStudio === studio.id ? 'primary.main' : '#e0e0e0'
+              }}
+              onClick={() => setSelectedStudio(studio.id)}
+            >
+              <CardContent>
+                <Box display="flex" alignItems="center" mb={1}>
+                  {studioTypeIcons[studio.type]}
+                  <Typography variant="h6" sx={{ ml: 1 }}>
+                    {studio.name}
+                  </Typography>
+                </Box>
+                <Typography variant="body2" color="text.secondary" gutterBottom>
+                  {studio.description}
+                </Typography>
+                <Box display="flex" alignItems="center" justifyContent="space-between" mt={2}>
+                  <Chip 
+                    label={`₦${studio.hourly_rate}/hour`} 
+                    size="small" 
+                    icon={<AttachMoney />}
+                  />
+                  <Chip 
+                    label={`Capacity: ${studio.capacity}`} 
+                    size="small" 
+                    variant="outlined"
+                  />
+                </Box>
+                {studio.amenities && (
+                  <Box mt={1}>
+                    {studio.amenities.map((amenity, index) => (
+                      <Chip 
+                        key={index} 
+                        label={amenity} 
+                        size="small" 
+                        sx={{ mr: 0.5, mb: 0.5 }}
+                      />
+                    ))}
+                  </Box>
+                )}
+              </CardContent>
+            </Card>
+          </Grid>
+        ))}
+      </Grid>
+
+      {/* Tabs for Calendar and List View */}
+      <Paper>
+        <Tabs value={tabValue} onChange={(e, v) => setTabValue(v)}>
+          <Tab label="Calendar View" icon={<CalendarToday />} />
+          <Tab label="List View" icon={<Schedule />} />
+        </Tabs>
+
+        <TabPanel value={tabValue} index={0}>
+          {loading ? (
+            <Box display="flex" justifyContent="center" p={4}>
+              <CircularProgress />
+            </Box>
+          ) : (
+            <Box sx={{ height: 600, p: 2 }}>
+              <Calendar
+                localizer={localizer}
+                events={calendarEvents}
+                startAccessor="start"
+                endAccessor="end"
+                style={{ height: '100%' }}
+                onSelectSlot={handleSelectSlot}
+                onSelectEvent={handleSelectEvent}
+                selectable
+                eventPropGetter={eventStyleGetter}
+                components={{
+                  toolbar: CustomToolbar
+                }}
+                view={calendarView}
+                onView={setCalendarView}
+              />
+            </Box>
+          )}
+        </TabPanel>
+
+        <TabPanel value={tabValue} index={1}>
+          <List>
+            {bookings
+              .filter(booking => !selectedStudio || booking.studio_id === selectedStudio)
+              .sort((a, b) => new Date(b.start_time) - new Date(a.start_time))
+              .map(booking => (
+                <React.Fragment key={booking.id}>
+                  <ListItem>
+                    <ListItemIcon>
+                      {studioTypeIcons[booking.studio_type]}
+                    </ListItemIcon>
+                    <ListItemText
+                      primary={
+                        <Box display="flex" alignItems="center" justifyContent="space-between">
+                          <Typography variant="subtitle1">
+                            {booking.purpose || 'Studio Booking'}
+                          </Typography>
+                          <Chip 
+                            label={booking.status} 
+                            size="small"
+                            color={booking.status === 'confirmed' ? 'success' : 'default'}
+                          />
+                        </Box>
+                      }
+                      secondary={
+                        <Box>
+                          <Typography variant="body2" color="text.secondary">
+                            {moment(booking.start_time).format('MMM DD, YYYY')} • 
+                            {moment(booking.start_time).format('HH:mm')} - 
+                            {moment(booking.end_time).format('HH:mm')}
+                          </Typography>
+                          <Box display="flex" alignItems="center" gap={2} mt={1}>
+                            {booking.project_title && (
+                              <Chip 
+                                label={booking.project_title} 
+                                size="small" 
+                                variant="outlined"
+                              />
+                            )}
+                            {booking.client_name && (
+                              <Chip 
+                                label={booking.client_name} 
+                                size="small" 
+                                variant="outlined"
+                                icon={<Business />}
+                              />
+                            )}
+                            <Chip 
+                              label={booking.booked_by_name || booking.booked_by_username} 
+                              size="small" 
+                              variant="outlined"
+                              icon={<Person />}
+                            />
+                            <Chip 
+                              label={`₦${booking.total_cost?.toLocaleString() || '0'}`} 
+                              size="small" 
+                              color="primary"
+                            />
+                          </Box>
+                        </Box>
+                      }
+                    />
+                    <Box>
+                      {(user.role === 'admin' || booking.user_id === user.id || booking.created_by === user.id) && (
+                        <>
+                          <Tooltip title="Edit">
+                            <IconButton 
+                              size="small" 
+                              onClick={() => handleOpenDialog(null, booking)}
+                              disabled={booking.status === 'cancelled'}
+                            >
+                              <Edit />
+                            </IconButton>
+                          </Tooltip>
+                          <Tooltip title="Cancel">
+                            <IconButton 
+                              size="small" 
+                              onClick={() => handleCancelBooking(booking.id)}
+                              color="error"
+                              disabled={booking.status === 'cancelled'}
+                            >
+                              <Cancel />
+                            </IconButton>
+                          </Tooltip>
+                        </>
+                      )}
+                    </Box>
+                  </ListItem>
+                  <Divider />
+                </React.Fragment>
+              ))}
+          </List>
+        </TabPanel>
+      </Paper>
+
+      {/* Booking Dialog */}
+      <Dialog open={openDialog} onClose={handleCloseDialog} maxWidth="md" fullWidth>
+        <DialogTitle>
+          {editingBooking ? 'Edit Booking' : 'New Studio Booking'}
+        </DialogTitle>
+        <DialogContent>
+          <Box sx={{ pt: 2 }}>
+            <Grid container spacing={2}>
+              <Grid item xs={12}>
+                <FormControl fullWidth required>
+                  <InputLabel>Studio</InputLabel>
+                  <Select
+                    value={formData.studio_id}
+                    label="Studio"
+                    onChange={(e) => setFormData({ ...formData, studio_id: e.target.value })}
+                  >
+                    {studios.map(studio => (
+                      <MenuItem key={studio.id} value={studio.id}>
+                        <Box display="flex" alignItems="center">
+                          {studioTypeIcons[studio.type]}
+                          <Typography sx={{ ml: 1 }}>
+                            {studio.name} - ₦{studio.hourly_rate}/hour
+                          </Typography>
+                        </Box>
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Grid>
+              
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  fullWidth
+                  label="Start Time"
+                  type="datetime-local"
+                  value={formData.start_time}
+                  onChange={(e) => setFormData({ ...formData, start_time: e.target.value })}
+                  InputLabelProps={{ shrink: true }}
+                  required
+                />
+              </Grid>
+              
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  fullWidth
+                  label="End Time"
+                  type="datetime-local"
+                  value={formData.end_time}
+                  onChange={(e) => setFormData({ ...formData, end_time: e.target.value })}
+                  InputLabelProps={{ shrink: true }}
+                  required
+                />
+              </Grid>
+              
+              <Grid item xs={12} sm={6}>
+                <FormControl fullWidth>
+                  <InputLabel>Project</InputLabel>
+                  <Select
+                    value={formData.project_id}
+                    label="Project"
+                    onChange={(e) => setFormData({ ...formData, project_id: e.target.value })}
+                  >
+                    <MenuItem value="">
+                      <em>No Project</em>
+                    </MenuItem>
+                    {projects.map(project => (
+                      <MenuItem key={project.id} value={project.id}>
+                        {project.title}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Grid>
+              
+              <Grid item xs={12} sm={6}>
+                <FormControl fullWidth>
+                  <InputLabel>Client</InputLabel>
+                  <Select
+                    value={formData.client_id}
+                    label="Client"
+                    onChange={(e) => setFormData({ ...formData, client_id: e.target.value })}
+                  >
+                    <MenuItem value="">
+                      <em>No Client</em>
+                    </MenuItem>
+                    {clients.map(client => (
+                      <MenuItem key={client.id} value={client.id}>
+                        {client.name}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Grid>
+              
+              <Grid item xs={12}>
+                <TextField
+                  fullWidth
+                  label="Purpose"
+                  value={formData.purpose}
+                  onChange={(e) => setFormData({ ...formData, purpose: e.target.value })}
+                  placeholder="e.g., Recording session, Photo shoot, etc."
+                />
+              </Grid>
+              
+              <Grid item xs={12}>
+                <TextField
+                  fullWidth
+                  multiline
+                  rows={3}
+                  label="Notes"
+                  value={formData.notes}
+                  onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                  placeholder="Any special requirements or notes..."
+                />
+              </Grid>
+            </Grid>
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseDialog}>Cancel</Button>
+          <Button onClick={handleSubmit} variant="contained">
+            {editingBooking ? 'Update' : 'Book'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </Box>
+  );
+}
+
+export default Bookings;

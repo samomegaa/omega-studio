@@ -324,7 +324,6 @@ exports.logout = async (req, res) => {
 // Get current user
 exports.getMe = async (req, res) => {
   try {
-console.log('getMe called, user from token:', req.user); // Add this
     const result = await pool.query(`
       SELECT 
         u.id, u.username, u.email, u.full_name, u.phone, u.status,
@@ -337,9 +336,8 @@ console.log('getMe called, user from token:', req.user); // Add this
       LEFT JOIN departments d ON ud.department_id = d.id
       WHERE u.id = $1
       GROUP BY u.id
-    `, [req.user.id]);
-console.log('getMe query result:', result.rows); // Add this    
-
+    `, [req.userId]);
+    
     if (result.rows.length === 0) {
       return res.status(404).json({ message: 'User not found' });
     }

@@ -185,29 +185,88 @@ exports.updateClient = async (req, res) => {
   }
 };
 
+
+
+
+
+
 // Delete client
 exports.deleteClient = async (req, res) => {
   const { id } = req.params;
+  const { user } = req;
+  
+  console.log('Attempting to delete client with ID:', id);
   
   try {
+    // Only admin can delete clients
+    if (!user.roles || !user.roles.includes('admin')) {
+      return res.status(403).json({ 
+        message: 'Access denied. Only administrators can delete clients.' 
+      });
+    }
+    
+    // First check if client exists
+    const clientCheck = await pool.query(
+      'SELECT id, name FROM clients WHERE id = $1',
+      [id]
+    );
+    
+    if (clientCheck.rows.length === 0) {
+      console.log('Client not found:', id);
+      return res.status(404).json({ message: 'Client not found' });
+    }
+    
+    console.log('Found client:', clientCheck.rows[0]);
+    
+    // Check for projects
     const projectCheck = await pool.query(
       'SELECT COUNT(*) FROM projects WHERE client_id = $1',
       [id]
     );
     
-    if (parseInt(projectCheck.rows[0].count) > 0) {
+    const projectCount = parseInt(projectCheck.rows[0].count);
+    console.log('Project count for client:', projectCount);
+    
+    if (projectCount > 0) {
       return res.status(400).json({ 
         message: 'Cannot delete client with existing projects' 
       });
     }
     
-    await pool.query('DELETE FROM clients WHERE id = $1', [id]);
+    // Check for bookings
+    const bookingCheck = await pool.query(
+      'SELECT COUNT(*) FROM bookings WHERE client_id = $1',
+      [id]
+    );
+    
+    const bookingCount = parseInt(bookingCheck.rows[0].count);
+    console.log('Booking count for client:', bookingCount);
+    
+    if (bookingCount > 0) {
+      return res.status(400).json({ 
+        message: 'Cannot delete client with existing bookings' 
+      });
+    }
+    
+    // Perform the delete
+    const deleteResult = await pool.query(
+      'DELETE FROM clients WHERE id = $1 RETURNING id',
+      [id]
+    );
+    
+    console.log('Delete result:', deleteResult.rows);
+    
+    if (deleteResult.rowCount === 0) {
+      return res.status(404).json({ message: 'Client not found or already deleted' });
+    }
+    
     res.json({ message: 'Client deleted successfully' });
   } catch (error) {
     console.error('Error deleting client:', error);
-    res.status(500).json({ message: 'Error deleting client' });
+    res.status(500).json({ message: 'Error deleting client', error: error.message });
   }
 };
+
 
 // Get client by ID
 exports.getClientById = async (req, res) => {

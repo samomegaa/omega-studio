@@ -39,7 +39,6 @@ import {
   Videocam,
   AccessTime,
   AttachMoney,
-  Settings,
   Person,
   Business,
   Cancel,
@@ -54,8 +53,6 @@ import 'react-big-calendar/lib/css/react-big-calendar.css';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../services/api';
 import { ViewList } from '@mui/icons-material';
-import { Delete } from '@mui/icons-material';
-import StudioManagement from './StudioManagement';
 
 const localizer = momentLocalizer(moment);
 
@@ -82,12 +79,11 @@ function Bookings() {
   const [message, setMessage] = useState({ type: '', text: '' });
   const [tabValue, setTabValue] = useState(0);
   const [calendarView, setCalendarView] = useState('month');
-const [openStudioSettings, setOpenStudioSettings] = useState(false); 
- 
+  
   const [formData, setFormData] = useState({
     studio_id: '',
-    department_id: '',  // Add this   
     client_id: '',
+    department_id: '',  // Add this   
     start_time: '',
     end_time: '',
     purpose: '',
@@ -140,14 +136,14 @@ const [openStudioSettings, setOpenStudioSettings] = useState(false);
     }
   };
 
- // const fetchProjects = async () => {
- //   try {
- //     const response = await api.get('/projects');
- //     setProjects(response.data);
- //   } catch (error) {
-//      console.error('Error fetching projects:', error);
-//    }
-//  };
+  const fetchProjects = async () => {
+    try {
+      const response = await api.get('/projects');
+      setProjects(response.data);
+    } catch (error) {
+      console.error('Error fetching projects:', error);
+    }
+  };
 
   const fetchClients = async () => {
     try {
@@ -158,35 +154,18 @@ const [openStudioSettings, setOpenStudioSettings] = useState(false);
     }
   };
 
-// Add this new function here
-const fetchClientsByDepartment = async (departmentId) => {
-  try {
-    if (!departmentId) {
-      setClients([]);
-      return;
-    }
-const response = await api.get('/clients');
-    const filteredClients = response.data.filter(client => 
-      client.department_id === departmentId
-    );
-    setClients(filteredClients);
-  } catch (error) {
-    console.error('Error fetching clients:', error);
-    setClients([]);
-  }
-};
-
   // Add the fetchDepartments function after fetchClients
-
 const fetchDepartments = async () => {
   try {
-    const response = await api.get('/users/departments');
+    const response = await api.get('/departments');
     setDepartments(response.data);
   } catch (error) {
     console.error('Error fetching departments:', error);
-    setDepartments([]); // Set empty array on error
   }
 };
+
+
+
 
 const handleOpenDialog = (slotInfo = null, booking = null) => {
     if (booking) {
@@ -280,7 +259,8 @@ const handleOpenDialog = (slotInfo = null, booking = null) => {
 
       const bookingData = {
         ...formData,
-       client_id: formData.client_id || null
+        project_id: formData.project_id || null,
+        client_id: formData.client_id || null
       };
 
       if (editingBooking) {
@@ -312,23 +292,6 @@ const handleOpenDialog = (slotInfo = null, booking = null) => {
       }
     }
   };
-
-// Add this function after handleCancelBooking
-const handleDeleteBooking = async (bookingId) => {
-  if (window.confirm('Are you sure you want to permanently delete this booking?')) {
-    try {
-      await api.delete(`/bookings/${bookingId}`);
-      setMessage({ type: 'success', text: 'Booking deleted successfully' });
-      fetchBookings();
-    } catch (error) {
-      setMessage({ type: 'error', text: 'Failed to delete booking' });
-    }
-  }
-};
-
-
-//  </IconButton>
-//)}
 
   // Transform bookings for calendar
   const calendarEvents = bookings
@@ -421,23 +384,11 @@ const handleDeleteBooking = async (bookingId) => {
           >
             New Booking
           </Button>
-
-{/* ADD THE MANAGE STUDIOS BUTTON HERE */}
-    {user.roles.includes('admin') && (
-      <Button
-        variant="outlined"
-        startIcon={<Settings />}
-        onClick={() => setOpenStudioSettings(true)}
-        sx={{ ml: 1 }}
-      >
-        Manage Studios
-      </Button>
-    )}
-    <IconButton onClick={fetchBookings} color="primary">
-      <Refresh />
-    </IconButton>
-  </Box>
-</Box>
+          <IconButton onClick={fetchBookings} color="primary">
+            <Refresh />
+          </IconButton>
+        </Box>
+      </Box>
 
       {message.text && (
         <Alert severity={message.type} onClose={() => setMessage({ type: '', text: '' })} sx={{ mb: 2 }}>
@@ -468,49 +419,18 @@ const handleDeleteBooking = async (bookingId) => {
                 <Typography variant="body2" color="text.secondary" gutterBottom>
                   {studio.description}
                 </Typography>
-                
-
-
-
-<Box display="flex" alignItems="center" justifyContent="space-between" mt={2}>
-  <Box>
-    {studio.promo_active ? (
-      <>
-        <Chip 
-          label={`${studio.promo_text}: ₦${Number(studio.promo_rate).toLocaleString()}`}
-          color="success"
-          size="small"
-          icon={<AttachMoney />}
-        />
-        <Typography variant="caption" display="block" sx={{ textDecoration: 'line-through', mt: 0.5 }}>
-          Regular: ₦{Number(studio.hourly_rate).toLocaleString()}/hour
-        </Typography>
-      </>
-    ) : (
-      <Chip 
-        label={`₦${Number(studio.hourly_rate).toLocaleString()}/hour`}
-        size="small"
-        icon={<AttachMoney />}
-      />
-    )}
-    
-    {/* Show custom rates if available */}
-    {studio.pricing_structure?.custom_rates?.length > 0 && (
-      <Typography variant="caption" display="block" sx={{ mt: 1 }}>
-        Other rates available
-      </Typography>
-    )}
-  </Box>
-  
-  <Chip 
-    label={`Capacity: ${studio.capacity}`} 
-    size="small" 
-    variant="outlined"
-  />
-</Box>
-
-
-
+                <Box display="flex" alignItems="center" justifyContent="space-between" mt={2}>
+                  <Chip 
+                    label={`₦${studio.hourly_rate}/hour`} 
+                    size="small" 
+                    icon={<AttachMoney />}
+                  />
+                  <Chip 
+                    label={`Capacity: ${studio.capacity}`} 
+                    size="small" 
+                    variant="outlined"
+                  />
+                </Box>
                 {studio.amenities && (
                   <Box mt={1}>
                     {studio.amenities.map((amenity, index) => (
@@ -647,19 +567,6 @@ const handleDeleteBooking = async (bookingId) => {
                               <Cancel />
                             </IconButton>
                           </Tooltip>
-
-{/* Add delete button for admin */}
-{user.roles && user.roles.includes('admin') && (
-  <Tooltip title="Delete">
-    <IconButton 
-      size="small"
-      onClick={() => handleDeleteBooking(booking.id)}
-      color="error"
-    >
-      <Delete />
-    </IconButton>
-  </Tooltip>
-)}
                         </>
                       )}
                     </Box>
@@ -754,26 +661,35 @@ const handleDeleteBooking = async (bookingId) => {
   </FormControl>
 </Grid>
 
-              <Grid item xs={12} sm={6}>
-                <FormControl fullWidth>
-                  <InputLabel>Project</InputLabel>
-                  <Select
-                    value={formData.project_id}
-                    label="Project"
-                    onChange={(e) => setFormData({ ...formData, project_id: e.target.value })}
-                  >
-                    <MenuItem value="">
-                      <em>No Project</em>
-                    </MenuItem>
-                    {projects.map(project => (
-                      <MenuItem key={project.id} value={project.id}>
-                        {project.title}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-              </Grid>
-              
+<Grid item xs={12} sm={6}>
+  <FormControl fullWidth required>
+    <InputLabel>Department</InputLabel>
+    <Select
+      value={formData.department_id || ''}
+      onChange={(e) => {
+        const deptId = e.target.value;
+        setFormData({
+          ...formData,
+          department_id: deptId,
+          client_id: null, // Reset client when department changes
+          project_id: null, // Clear project_id
+          // Auto-select matching studio
+          studio_id: deptId === 1 ? 5 : deptId === 2 ? 6 : deptId === 3 ? 7 : formData.studio_id
+        });
+        // Fetch clients for this department
+        fetchClientsByDepartment(deptId);
+      }}
+      label="Department"
+    >
+      {departments.map(dept => (
+        <MenuItem key={dept.id} value={dept.id}>
+          {dept.name}
+        </MenuItem>
+      ))}
+    </Select>
+  </FormControl>
+</Grid>
+
               <Grid item xs={12} sm={6}>
                 <FormControl fullWidth>
                   <InputLabel>Client</InputLabel>
@@ -830,14 +746,6 @@ value={formData.client_id || ''}
           </Button>
         </DialogActions>
       </Dialog>
-
-{/* ADD STUDIO MANAGEMENT DIALOG HERE */}
-      <StudioManagement 
-        open={openStudioSettings}
-        onClose={() => setOpenStudioSettings(false)}
-        studios={studios}
-        fetchStudios={fetchStudios}
-      />
     </Box>
   );
 }

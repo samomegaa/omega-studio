@@ -89,9 +89,25 @@ const isAdmin = userRoles.includes('admin') || user.role === 'admin';
 };
 
 // Get available engineers for a department
+
 exports.getEngineers = async (req, res) => {
   try {
     const { departmentId } = req.query;
+    
+    console.log('getEngineers called with departmentId:', departmentId, 'type:', typeof departmentId);
+    
+    // Return empty array if no valid departmentId
+    if (!departmentId || departmentId === 'undefined' || departmentId === 'null' || departmentId === '') {
+      console.log('No valid departmentId, returning empty array');
+      return res.json([]);
+    }
+    
+    // Parse and validate departmentId
+    const deptIdNum = parseInt(departmentId, 10);
+    if (isNaN(deptIdNum) || deptIdNum <= 0) {
+      console.log('Invalid departmentId number:', deptIdNum);
+      return res.json([]);
+    }
     
     let query = `
       SELECT DISTINCT
@@ -103,24 +119,19 @@ exports.getEngineers = async (req, res) => {
       INNER JOIN user_roles ur ON u.id = ur.user_id
       INNER JOIN roles r ON ur.role_id = r.id
       WHERE r.name = 'engineer' AND u.status = 'active'
+      AND u.id IN (
+        SELECT user_id FROM user_departments WHERE department_id = $1
+      )
+      ORDER BY u.full_name, u.username
     `;
     
-    const queryParams = [];
+    console.log('Executing query with departmentId:', deptIdNum);
+    const result = await pool.query(query, [deptIdNum]);
     
-    if (departmentId) {
-      query += ` AND u.id IN (
-        SELECT user_id FROM user_departments WHERE department_id = $1
-      )`;
-      queryParams.push(departmentId);
-    }
-    
-    query += ' ORDER BY u.full_name, u.username';
-    
-    const result = await pool.query(query, queryParams);
     res.json(result.rows);
   } catch (error) {
     console.error('Error fetching engineers:', error);
-    res.status(500).json({ message: 'Error fetching engineers' });
+    res.status(500).json({ message: 'Error fetching engineers', error: error.message });
   }
 };
 
@@ -292,18 +303,38 @@ console.log('Original values:', { assigned_to_id, client_id, end_date });
   }
 };
 
-// Delete project
 exports.deleteProject = async (req, res) => {
-  const { id } = req.params;
-  
   try {
+    const { id } = req.params;
+    const { user } = req;
+    
+    // Only admin can delete projects
+    if (!user.roles || !user.roles.includes('admin')) {
+      return res.status(403).json({ 
+        message: 'Access denied. Only administrators can delete projects.' 
+      });
+    }
+    
+    // Check if project exists
+    const projectCheck = await pool.query(
+      'SELECT id, title FROM projects WHERE id = $1',
+      [id]
+    );
+    
+    if (projectCheck.rows.length === 0) {
+      return res.status(404).json({ message: 'Project not found' });
+    }
+    
+    // Delete the project
     await pool.query('DELETE FROM projects WHERE id = $1', [id]);
+    
     res.json({ message: 'Project deleted successfully' });
   } catch (error) {
     console.error('Error deleting project:', error);
     res.status(500).json({ message: 'Error deleting project' });
   }
 };
+
 
 // Get project by ID
 exports.getProjectById = async (req, res) => {

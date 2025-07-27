@@ -203,7 +203,7 @@ function Clients() {
   const handleDelete = async (clientId) => {
     if (window.confirm('Are you sure you want to delete this client? This will not delete associated projects.')) {
       try {
-        // await api.delete(`/clients/${clientId}`);
+        await api.delete(`/clients/${clientId}`);
         setMessage({ type: 'success', text: 'Client deleted successfully' });
         fetchClients();
       } catch (error) {
@@ -501,44 +501,52 @@ function Clients() {
                     color={client.is_active ? 'success' : 'default'}
                   />
                 </TableCell>
-                <TableCell>
-                  <Tooltip title="View Details">
-                    <IconButton
-                      size="small"
-                      onClick={() => viewClientDetails(client)}
-                      color="info"
-                    >
-                      <Person />
-                    </IconButton>
-                  </Tooltip>
-                  <Tooltip title="Edit">
-                    <IconButton
-                      size="small"
-                      onClick={() => handleOpenDialog(client)}
-                      color="primary"
-                    >
-                      <Edit />
-                    </IconButton>
-                  </Tooltip>
-                  <Tooltip title="Delete">
-                    <IconButton
-                      size="small"
-                      onClick={() => handleDelete(client.id)}
-                      color="error"
-                    >
-                      <Delete />
-                    </IconButton>
-                  </Tooltip>
+                
+
+<TableCell>
+                  <Box display="flex" gap={1}>
+                    {/* Edit button - always visible */}
+                    <Tooltip title="Edit">
+                      <IconButton
+                        size="small"
+                        onClick={() => {
+                          setEditingClient(client);
+                          setFormData({
+                            name: client.name,
+                            email: client.email,
+                            phone: client.phone || '',
+                            address: client.address || '',
+                            company: client.company || '',
+                            department_id: client.department_id || ''
+                          });
+                          setOpenDialog(true);
+                        }}
+                        color="primary"
+                      >
+                        <Edit />
+                      </IconButton>
+                    </Tooltip>
+ {/* Only show delete button for admins */}
+                    {user.roles && user.roles.includes('admin') && (
+                      <Tooltip title="Delete">
+                        <IconButton
+                          size="small"
+                          onClick={() => handleDelete(client.id)}
+                          color="error"
+                        >
+                          <Delete />
+                        </IconButton>
+                      </Tooltip>
+                    )}
+                  </Box>
                 </TableCell>
               </TableRow>
             ))}
           </TableBody>
-
         </Table>
       </TableContainer>
 
-      {/* Add/Edit Client Dialog */}
-   
+  
 {/* Add/Edit Client Dialog */}
       <Dialog open={openDialog} onClose={handleCloseDialog} maxWidth="md" fullWidth>
         <DialogTitle>{editingClient ? 'Edit Client' : 'Add New Client'}</DialogTitle>

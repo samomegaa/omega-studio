@@ -45,27 +45,6 @@ exports.login = async (req, res) => {
       return res.status(401).json({ message: 'Account is locked. Please try again later.' });
     }
     
-// Check if account is pending approval
-if (user.status === 'pending') {
-  return res.status(401).json({ 
-    message: 'Your account is pending approval. Please wait for an administrator to approve your account.',
-    isPending: true 
-  });
-}
-
-// Check if account is active
-if (user.status !== 'active') {
-  return res.status(401).json({ 
-    message: 'Your account is not active. Please contact an administrator.',
-    isInactive: true 
-  });
-}
-
-
-
-
-
-
     // Check password
     const isValidPassword = await bcrypt.compare(password, user.password);
     
@@ -132,7 +111,7 @@ exports.register = async (req, res) => {
     return res.status(400).json({ message: 'Password must be at least 6 characters' });
   }
   
-  // const client = await pool.connect();
+  const client = await pool.connect();
   
   try {
     await pool.query('BEGIN');
@@ -184,43 +163,38 @@ exports.register = async (req, res) => {
         user: newUser
       });
     } else {
-
-  // Self-registration - assign staff role and require approval
-  const staffRole = await pool.query(
-    'SELECT id FROM roles WHERE name = $1',
-    ['staff']
-  );
-  
-  if (staffRole.rows.length > 0) {
-    await pool.query(
-      'INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)',
-      [newUser.id, staffRole.rows[0].id]
-    );
-  }
-  
-  await pool.query('COMMIT');
-  
-  // DON'T return a token for pending users!
-  res.status(201).json({
-    message: 'Registration successful! Your account is pending approval. You will be notified once an admin approves your account.',
-    requiresApproval: true,
-    // NO token here!
-    user: {
-      id: newUser.id,
-      email: newUser.email,
-      username: newUser.username,
-      full_name: newUser.full_name,
-      status: 'pending'
+      // Self-registration - assign staff role and require approval
+      const staffRole = await pool.query(
+        'SELECT id FROM roles WHERE name = $1',
+        ['staff']
+      );
+      
+      if (staffRole.rows.length > 0) {
+        await pool.query(
+          'INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)',
+          [newUser.id, staffRole.rows[0].id]
+        );
+      }
+      
+      await pool.query('COMMIT');
+      
+      res.status(201).json({
+        message: 'Registration successful. Please wait for admin approval.',
+        user: {
+          id: newUser.id,
+          username: newUser.username,
+          email: newUser.email,
+          fullName: newUser.full_name
+        }
+        // No token for self-registration
+      });
     }
-  });
-}
-
   } catch (error) {
     await pool.query('ROLLBACK');
     console.error('Registration error:', error);
     res.status(500).json({ message: 'Error during registration' });
   } finally {
-    // client.release();
+    client.release();
   }
 };
 
@@ -229,7 +203,7 @@ exports.register = async (req, res) => {
 exports.createUser = async (req, res) => {
   const { username, email, password, full_name, phone, roles, departments, status } = req.body;
   
-  // const client = await pool.connect();
+  const client = await pool.connect();
   
   try {
     await pool.query('BEGIN');
@@ -296,7 +270,7 @@ exports.createUser = async (req, res) => {
     console.error('Error creating user:', error);
     res.status(500).json({ message: 'Error creating user' });
   } finally {
-    // client.release();
+    client.release();
   }
 };
 
@@ -324,7 +298,6 @@ exports.logout = async (req, res) => {
 // Get current user
 exports.getMe = async (req, res) => {
   try {
-console.log('getMe called, user from token:', req.user); // Add this
     const result = await pool.query(`
       SELECT 
         u.id, u.username, u.email, u.full_name, u.phone, u.status,
@@ -337,9 +310,8 @@ console.log('getMe called, user from token:', req.user); // Add this
       LEFT JOIN departments d ON ud.department_id = d.id
       WHERE u.id = $1
       GROUP BY u.id
-    `, [req.user.id]);
-console.log('getMe query result:', result.rows); // Add this    
-
+    `, [req.userId]);
+    
     if (result.rows.length === 0) {
       return res.status(404).json({ message: 'User not found' });
     }

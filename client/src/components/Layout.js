@@ -27,8 +27,10 @@ import {
   Person,
   CalendarToday,
   AttachMoney,
-  AccessTime,
-  Assessment,
+Group,
+EventSeat,
+AccessTime,
+ Assessment,
   ExpandLess,
   ExpandMore,
   AccountCircle,
@@ -130,6 +132,24 @@ function Layout({ children }) {
       }
     ];
 
+{user && user.role === 'admin' && (
+    <ListItem disablePadding>
+      <ListItemButton
+        selected={location.pathname === '/service-packages'}
+        onClick={() => {
+          navigate('/service-packages');
+          setMobileOpen(false);
+        }}
+      >
+        <ListItemIcon>
+          <AttachMoney />
+        </ListItemIcon>
+        <ListItemText primary="Package Pricing" />
+      </ListItemButton>
+    </ListItem>
+  )}
+
+
     // Filter menu items based on user role
     return allMenuItems.filter(item => 
       item.roles.some(role => user?.roles?.includes(role)) || item.roles.includes('staff')
@@ -160,6 +180,7 @@ function Layout({ children }) {
                     setMobileOpen(false);
                   }
                 }}
+
               >
                 <ListItemIcon>
                   {item.icon}

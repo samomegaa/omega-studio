@@ -1,0 +1,40 @@
+exports.getAvailableSlots = async (req, res) => {
+  const { studio_id, date } = req.query;
+  
+  try {
+    // Get all bookings for the studio on the given date
+    const bookings = await pool.query(`
+      SELECT start_time, end_time 
+      FROM bookings 
+      WHERE studio_id = $1 
+      AND date = $2::date
+      AND status != 'cancelled'
+      ORDER BY start_time
+    `, [studio_id, date]);
+    
+    // Business hours: 8 AM to 10 PM
+    const businessStart = 8;
+    const businessEnd = 22;
+    const availableSlots = [];
+    
+    let currentHour = businessStart;
+    
+    bookings.rows.forEach(booking => {
+      const bookingStart = parseInt(booking.start_time.split(':')[0]);
+      const bookingEnd = parseInt(booking.end_time.split(':')[0]);
+      
+      if (currentHour < bookingStart) {
+        availableSlots.push({
+          start: currentHour,
+          end: bookingStart
+        });
+      }
+      currentHour = Math.max(currentHour, bookingEnd);
+    });
+    
+    if (currentHour < businessEnd) {
+      availableSlots.push({
+        start: currentHour,
+        end: businessEnd
+      });
+    }

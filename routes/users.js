@@ -1,20 +1,21 @@
 const express = require('express');
 const router = express.Router();
 const userController = require('../controllers/userController');
-const { authMiddleware, adminMiddleware } = require('../middleware/auth');
+const { authMiddleware, checkRole } = require('../middleware/auth');
 
 // All routes require authentication
 router.use(authMiddleware);
 
+// These routes are needed by the UI components
+router.get('/roles', userController.getRoles);
+router.get('/departments', userController.getDepartments);  // Add this line
+
 // Admin only routes
-router.get('/', adminMiddleware, userController.getAllUsers);
-router.post('/', adminMiddleware, userController.createUser);
-router.put('/:id', adminMiddleware, userController.updateUser);
-router.delete('/:id', adminMiddleware, userController.deleteUser);
-router.put('/:id/approve', adminMiddleware, userController.approveUser);
-router.get('/roles', adminMiddleware, userController.getRoles);
-router.get('/departments', adminMiddleware, userController.getDepartments);
+router.use(checkRole(['admin', 'super_admin'])); 
+router.get('/', userController.getAllUsers);
+router.post('/', userController.createUser);
+router.put('/:id', userController.updateUser);
+router.delete('/:id', userController.deleteUser);
+router.put('/:id/approve', userController.approveUser);
 
-
-router.put('/:id/reset-password', adminMiddleware, userController.resetPassword);
 module.exports = router;

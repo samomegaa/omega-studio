@@ -7,8 +7,13 @@ client/build/
 
 # Environment variables
 .env
+client/.env
 .env.local
 .env.production
+
+*.sql
+*.tar.gz
+.pm2/
 
 # Logs
 *.log

@@ -44,67 +44,90 @@ function Login() {
   });
 
 const handleSubmit = async (e) => {
-    e.preventDefault();
-    setMessage({ type: '', text: '' });
-    setLoading(true);
+  e.preventDefault();
+  setMessage({ type: '', text: '' });
+  setLoading(true);
 
-    try {
-      if (mode === 'login') {
-        const response = await api.post('/auth/login', {
-          emailOrUsername: formData.emailOrUsername,
-          password: formData.password
-        });
-        
-        console.log('Login response:', response.data);
-        console.log('Token:', response.data.token);
-        console.log('User:', response.data.user);
-        
-        login(response.data.token, response.data.user);
-        
-        console.log('After login call - checking localStorage:');
-        console.log('Stored token:', localStorage.getItem('token'));
-        console.log('Stored user:', localStorage.getItem('user'));
-        
-        navigate('/dashboard');
-        
-      } else if (mode === 'register') {
-        if (formData.password !== formData.confirmPassword) {
-          setMessage({ type: 'error', text: 'Passwords do not match' });
-          setLoading(false);
-          return;
-        }
-        
-        const response = await api.post('/auth/register', {
-          username: formData.username,
-          email: formData.email,
-          password: formData.password,
-          full_name: formData.full_name
-        });
-        
-        login(response.data.token, response.data.user);
-        navigate('/dashboard');
-        
-      } else if (mode === 'forgot') {
-        await api.post('/auth/forgot-password', {
-          email: formData.email
-        });
-        
+  try {
+    if (mode === 'login') {
+      const response = await api.post('/auth/login', {
+        emailOrUsername: formData.emailOrUsername,
+        password: formData.password
+      });
+      
+      console.log('Login response:', response.data);
+      console.log('Token:', response.data.token);
+      console.log('User:', response.data.user);
+      
+      login(response.data.token, response.data.user);
+      
+      console.log('After login call - checking localStorage:');
+      console.log('Stored token:', localStorage.getItem('token'));
+      console.log('Stored user:', localStorage.getItem('user'));
+      
+      navigate('/dashboard');
+      
+    } else if (mode === 'register') {
+      if (formData.password !== formData.confirmPassword) {
+        setMessage({ type: 'error', text: 'Passwords do not match' });
+        setLoading(false);
+        return;
+      }
+      
+      const response = await api.post('/auth/register', {
+        username: formData.username,
+        email: formData.email,
+        password: formData.password,
+        full_name: formData.full_name
+      });
+      
+      // Check if approval is required
+      if (response.data.requiresApproval) {
         setMessage({ 
           type: 'success', 
-          text: 'Password reset instructions sent to your email' 
+          text: response.data.message 
         });
+        // Clear form
+        setFormData({
+          emailOrUsername: '',
+          email: '',
+          username: '',
+          password: '',
+          confirmPassword: '',
+          full_name: ''
+        });
+        // Switch to login mode after showing message
+        setTimeout(() => {
+          setMode('login');
+        }, 5000);
+      } else {
+        // Admin created user - has token, log them in
+        login(response.data.token, response.data.user);
+        navigate('/dashboard');
       }
-    } catch (error) {
-      setMessage({ 
-        type: 'error', 
-        text: error.response?.data?.message || 'An error occurred' 
+      
+    } else if (mode === 'forgot') {
+      await api.post('/auth/forgot-password', {
+        email: formData.email
       });
-    } finally {
-      setLoading(false);
+      
+      setMessage({ 
+        type: 'success', 
+        text: 'Password reset instructions sent to your email' 
+      });
     }
-  };
+  } catch (error) {
+    setMessage({ 
+      type: 'error', 
+      text: error.response?.data?.message || 'An error occurred' 
+    });
+  } finally {
+    setLoading(false);
+  }
+};
 
-  return (
+
+return (
     <Box 
       sx={{ 
         minHeight: '100vh', 

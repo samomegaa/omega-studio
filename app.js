@@ -10,6 +10,8 @@ const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 const profileRoutes = require('./routes/profile');
 const { blockIPMiddleware, trackScanAttempt } = require('./utils/security');
+const servicePackageRoutes = require('./routes/servicePackages');
+const dashboardRoutes = require('./routes/dashboard');
 
 const app = express();
 
@@ -71,6 +73,7 @@ app.use((req, res, next) => {
 // Import routes
 const clientRoutes = require('./routes/clients');
 const projectRoutes = require('./routes/projects');
+const studiosRoutes = require('./routes/studios');
 
 // Use routes - AFTER all middleware
 app.use('/api/clients', clientRoutes);
@@ -81,6 +84,9 @@ app.use('/api/users', require('./routes/users'));
 app.use('/api/bookings', require('./routes/bookings'));
 app.use('/api/attendance', require('./routes/attendance'));
 app.use('/api/reports', require('./routes/reports'));
+app.use('/api/studios', studiosRoutes);
+app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/service-packages', servicePackageRoutes);
 //app.use('/api/profile', profileRoutes);//
 
 // Continue with the rest of your app.js...

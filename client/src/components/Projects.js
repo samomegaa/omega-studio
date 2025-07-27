@@ -30,7 +30,8 @@ import {
   Card,
   CardContent,
   LinearProgress,
-  InputAdornment
+FormHelperText,
+ InputAdornment
 } from '@mui/material';
 import {
   Add,
@@ -60,7 +61,10 @@ function TabPanel({ children, value, index }) {
 
 function Projects() {
   const { user } = useAuth();
-  const [projects, setProjects] = useState([]);
+const isAdmin = user?.roles?.includes('admin');
+const isMadmin = user?.roles?.includes('madmin');
+const isEngineer = user?.roles?.includes('engineer');  
+const [projects, setProjects] = useState([]);
   const [clients, setClients] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [engineers, setEngineers] = useState([]);
@@ -89,8 +93,20 @@ function Projects() {
   const [newClientData, setNewClientData] = useState({
     name: '',
     email: '',
-    phone: ''
-  });
+    phone: '',
+department_id: '' // Add this line 
+ });
+
+// Auto-set department for madmin/engineer when dialog opens
+useEffect(() => {
+  if (showNewClientForm && !isAdmin && user?.department_ids?.length > 0) {
+    setNewClientData(prev => ({
+      ...prev,
+      department_id: prev.department_id || user.department_ids[0]
+    }));
+  }
+}, [showNewClientForm, isAdmin, user]);
+
 
   const projectStatuses = [
     { value: 'active', label: 'Active', color: 'primary' },
@@ -100,11 +116,26 @@ function Projects() {
     { value: 'cancelled', label: 'Cancelled', color: 'default' }
   ];
 
-  useEffect(() => {
-    fetchProjects();
-    fetchClients();
-    fetchDepartments();
-  }, []);
+ useEffect(() => {
+  fetchProjects();
+  fetchClients();
+  fetchDepartments();
+}, [user]); // Add user as dependency
+
+// Auto-set department for madmin/engineer when departments load
+useEffect(() => {
+  if ((isMadmin || isEngineer) && departments.length === 1 && !formData.department_id) {
+    setFormData(prev => ({ ...prev, department_id: departments[0].id }));
+  }
+}, [departments, isMadmin, isEngineer]);
+
+// Fetch engineers when department changes
+useEffect(() => {
+  if (formData.department_id) {
+    fetchEngineers(formData.department_id);
+  }
+}, [formData.department_id]);
+
 
   const fetchProjects = async () => {
     try {
@@ -119,31 +150,54 @@ function Projects() {
     }
   };
 
-  const fetchClients = async () => {
-    try {
-      const response = await api.get('/clients');
+const fetchClients = async () => {
+  try {
+    const response = await api.get('/clients');
+    
+    if (isAdmin) {
       setClients(response.data);
-    } catch (error) {
-      console.error('Error fetching clients:', error);
+    } else if ((isMadmin || isEngineer) && user?.department_ids) {
+      // Only show clients from user's departments
+      const filteredClients = response.data.filter(client => 
+        user.department_ids.includes(client.department_id)
+      );
+      setClients(filteredClients);
+    } else {
+      setClients(response.data);
     }
-  };
-
-  
-
+  } catch (error) {
+    console.error('Error fetching clients:', error);
+  }
+};
 
 const fetchDepartments = async () => {
   try {
-    let endpoint = '/users/departments';
+    const response = await api.get('/departments');
+    console.log('Departments response:', response.data); // Debug log
     
-    // For madmin/engineer, get only their departments
-    if (user?.role === 'madmin' || user?.role === 'engineer') {
-      endpoint = `/users/${user.id}/departments`;
+    // Ensure we have an array
+    const departmentsArray = Array.isArray(response.data) ? response.data : [];
+    
+    if (isAdmin) {
+      // Admin sees all departments
+      setDepartments(departmentsArray);
+    } else if ((isMadmin || isEngineer) && user?.department_ids) {
+      // Filter to only show user's departments
+      const userDepartments = departmentsArray.filter(dept => 
+        user.department_ids.includes(dept.id)
+      );
+      setDepartments(userDepartments);
+      
+      // If user has departments, auto-set the first one in formData
+      if (userDepartments.length > 0 && !formData.department_id) {
+        setFormData(prev => ({ ...prev, department_id: userDepartments[0].id }));
+      }
+    } else {
+      setDepartments(departmentsArray);
     }
-    
-    const response = await api.get(endpoint);
-    setDepartments(response.data);
   } catch (error) {
     console.error('Error fetching departments:', error);
+    setDepartments([]); // Set empty array on error
   }
 };
 
@@ -157,8 +211,6 @@ const fetchEngineers = async (departmentId) => {
   }
 };
 
-
-  
 const handleOpenDialog = (project = null) => {
   if (project) {
     setEditingProject(project);
@@ -166,11 +218,11 @@ const handleOpenDialog = (project = null) => {
       title: project.title,
       description: project.description || '',
       client_id: project.client_id || '',
-      department_id: project.department_id,
+      department_id: project.department_id || '',
       assigned_to_id: project.assigned_to_id || '',
-      status: project.status,
-      start_date: project.start_date ? project.start_date.split('T')[0] : '',
-      end_date: project.end_date ? project.end_date.split('T')[0] : ''
+      status: project.status || 'active',
+      start_date: project.start_date || '',
+      end_date: project.end_date || ''
     });
     if (project.department_id) {
       fetchEngineers(project.department_id);
@@ -178,11 +230,10 @@ const handleOpenDialog = (project = null) => {
   } else {
     setEditingProject(null);
     
-    // For madmin/engineer, pre-select their department
+    // Get default department for madmin/engineer
     let defaultDeptId = '';
-    if ((user?.role === 'madmin' || user?.role === 'engineer') && departments.length > 0) {
-      defaultDeptId = departments[0].id;
-      fetchEngineers(defaultDeptId);
+    if ((isMadmin || isEngineer) && user?.department_ids?.length > 0) {
+      defaultDeptId = user.department_ids[0];
     }
     
     setFormData({
@@ -195,6 +246,10 @@ const handleOpenDialog = (project = null) => {
       start_date: '',
       end_date: ''
     });
+    
+    if (defaultDeptId) {
+      fetchEngineers(defaultDeptId);
+    }
   }
   setOpenDialog(true);
 };
@@ -219,16 +274,15 @@ const handleOpenDialog = (project = null) => {
     }
   };
 
-
 const handleSubmit = async () => {
   try {
     let projectData = { ...formData };
     
     // For madmin/engineer, auto-set department if not set
-    if ((user?.role === 'madmin' || user?.role === 'engineer') && !projectData.department_id) {
+    if ((isMadmin || isEngineer) && !projectData.department_id) {
       // Get user's first department from the departments list
       if (departments.length > 0) {
-        projectData.department_id = departments[0].id;
+       projectData.department_id = user.department_ids[0];
       }
     }
 
@@ -254,8 +308,6 @@ const handleSubmit = async () => {
   }
 };
 
-
-
 const handleDelete = async (projectId) => {
     if (window.confirm('Are you sure you want to delete this project?')) {
       try {
@@ -268,7 +320,6 @@ const handleDelete = async (projectId) => {
     }
   };
 
-
 const handleCreateClient = async () => {
   try {
     if (!newClientData.name || !newClientData.email) {
@@ -276,38 +327,25 @@ const handleCreateClient = async () => {
       return;
     }
 
-    // For madmin/engineer, use their first assigned department
-    let departmentId = formData.department_id;
-    if (!departmentId && (user?.role === 'madmin' || user?.role === 'engineer')) {
-      if (departments.length > 0) {
-        departmentId = departments[0].id;
-      }
-    }
-
-    if (!departmentId) {
-      setMessage({ type: 'error', text: 'Department is required' });
-      return;
-    }
-
-    const clientResponse = await api.post('/clients', {
-      ...newClientData,
-      department_id: departmentId
+ const clientResponse = await api.post('/clients', {
+      name: newClientData.name,
+      email: newClientData.email,
+      phone: newClientData.phone || '',
+      department_id: newClientData.department_id,
+      created_by_id: user.id
     });
 
-    // Refresh clients list
-    await fetchClients();
-    
-    // Select the new client
-    setFormData({ ...formData, client_id: clientResponse.data.client.id });
-    
-    // Reset form
+// Add the new client to the list and select it
+    setClients([...clients, clientResponse.data]);
+    setFormData({ ...formData, client_id: clientResponse.data.id });
     setShowNewClientForm(false);
-    setNewClientData({ name: '', email: '', phone: '' });
-    
+    setNewClientData({ name: '', email: '', phone: '', department_id: '' });
     setMessage({ type: 'success', text: 'Client created successfully' });
   } catch (error) {
-    console.error('Client creation error:', error);
-    setMessage({ type: 'error', text: error.response?.data?.message || 'Failed to create client' });
+    setMessage({ 
+      type: 'error', 
+      text: error.response?.data?.message || 'Failed to create client' 
+    });
   }
 };
 
@@ -576,8 +614,9 @@ const handleCreateClient = async () => {
               </TableRow>
             </TableHead>
             <TableBody>
-              {filteredProjects.map((project) => (
-                <TableRow key={project.id} hover>
+          {Array.isArray(filteredProjects) && filteredProjects.map((project) => (
+
+               <TableRow key={project.id} hover>
                   <TableCell>
                     <Box display="flex" alignItems="center">
                       <Avatar sx={{ mr: 2, bgcolor: 'primary.main' }}>
@@ -634,25 +673,35 @@ const handleCreateClient = async () => {
                         <Description />
                       </IconButton>
                     </Tooltip>
-                    <Tooltip title="Edit">
-                      <IconButton
-                        size="small"
-                        onClick={() => handleOpenDialog(project)}
-                        color="primary"
-                      >
-                        <Edit />
-                      </IconButton>
-                    </Tooltip>
-                    <Tooltip title="Delete">
-                      <IconButton
-                        size="small"
-                        onClick={() => handleDelete(project.id)}
-                        color="error"
-                      >
-                        <Delete />
-                      </IconButton>
-                    </Tooltip>
-                  </TableCell>
+                    </TableCell>
+
+<TableCell>
+  <Box display="flex" gap={1}>
+    {/* Edit button */}
+    <Tooltip title="Edit">
+      <IconButton
+        onClick={() => handleOpenDialog(project)}
+        color="primary"
+        size="small"
+      >
+        <Edit />
+      </IconButton>
+    </Tooltip>
+    
+    {/* Only show delete button for admins */}
+    {user.roles && user.roles.includes('admin') && (
+      <Tooltip title="Delete">
+        <IconButton
+          onClick={() => handleDelete(project.id)}
+          color="error"
+          size="small"
+        >
+          <Delete />
+        </IconButton>
+      </Tooltip>
+    )}
+</Box>
+</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -686,59 +735,64 @@ const handleCreateClient = async () => {
                 />
               </Grid>
               
-
-
-
-
+<Grid item xs={12} sm={6}>
+  <FormControl fullWidth>
+    <InputLabel>Client</InputLabel>
+    <Select
+      value={formData.client_id}
+      label="Client"
+      onChange={(e) => {
+        if (e.target.value === 'new') {
+          setShowNewClientForm(true);
+        } else {
+          setFormData({ ...formData, client_id: e.target.value });
+        }
+      }}
+    >
+      <MenuItem value="">
+        <em>No Client</em>
+      </MenuItem>
+      <MenuItem value="new" sx={{ color: 'primary.main', fontWeight: 'bold' }}>
+        + Create New Client
+      </MenuItem>
+      {Array.isArray(clients) && clients.length > 0 ? (
+        clients.map((client) => (
+          <MenuItem key={client.id} value={client.id}>
+            {client.name}
+          </MenuItem>
+        ))
+      ) : (
+        <MenuItem value="" disabled>
+          No clients available
+        </MenuItem>
+      )}
+    </Select>
+  </FormControl>
+</Grid>
 
 <Grid item xs={12} sm={6}>
-                <FormControl fullWidth>
-                  <InputLabel>Client</InputLabel>
-                  <Select
-                    value={formData.client_id}
-                    label="Client"
-                    onChange={(e) => {
-                      if (e.target.value === 'new') {
-                        setShowNewClientForm(true);
-                      } else {
-                        setFormData({ ...formData, client_id: e.target.value });
-                      }
-                    }}
-                  >
-                    <MenuItem value="">
-                      <em>No Client</em>
-                    </MenuItem>
-                    <MenuItem value="new" sx={{ color: 'primary.main', fontWeight: 'bold' }}>
-                      + Create New Client
-                    </MenuItem>
-                    {clients.map((client) => (
-                      <MenuItem key={client.id} value={client.id}>
-                        {client.name}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-              </Grid>
-
-
-<Grid item xs={12} sm={6}>
-                <FormControl fullWidth required>
-                  <InputLabel>Department</InputLabel>
-                  <Select
-                    value={formData.department_id}
-                    label="Department"
-                    onChange={handleDepartmentChange}
-                    disabled={user?.role === 'madmin' || user?.role === 'engineer'}
-                  >
-                    {departments.map((dept) => (
-                      <MenuItem key={dept.id} value={dept.id}>
-                        {dept.name}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-              </Grid>
-
+  <FormControl fullWidth required>
+    <InputLabel>Department</InputLabel>
+    <Select
+      value={formData.department_id}
+      label="Department"
+      onChange={(e) => setFormData({ ...formData, department_id: e.target.value })}
+      disabled={isMadmin || isEngineer}
+    >
+      {Array.isArray(departments) && departments.length > 0 ? (
+        departments.map((dept) => (
+          <MenuItem key={dept.id} value={dept.id}>
+            {dept.name}
+          </MenuItem>
+        ))
+      ) : (
+        <MenuItem value="" disabled>
+          No departments available
+        </MenuItem>
+      )}
+    </Select>
+  </FormControl>
+</Grid>
 
 <Grid item xs={12} sm={6}>
                 <FormControl fullWidth>
@@ -749,31 +803,38 @@ const handleCreateClient = async () => {
                     onChange={(e) => setFormData({ ...formData, assigned_to_id: e.target.value })}
                     disabled={!formData.department_id || engineers.length === 0}
                   >
-                    <MenuItem value="">
-                      <em>Unassigned</em>
-                    </MenuItem>
-                    {engineers.map((engineer) => (
-                      <MenuItem key={engineer.id} value={engineer.id}>
-                        {engineer.full_name || engineer.username}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <FormControl fullWidth>
-                  <InputLabel>Status</InputLabel>
-                  <Select
-                    value={formData.status}
-                    label="Status"
-                    onChange={(e) => setFormData({ ...formData, status: e.target.value })}
-                  >
-                    {projectStatuses.map((status) => (
-                      <MenuItem key={status.value} value={status.value}>
-                        {status.label}
-                      </MenuItem>
-                    ))}
-                  </Select>
+<MenuItem value="">
+  <em>Unassigned</em>
+</MenuItem>
+{Array.isArray(engineers) && engineers.length > 0 ? (
+  engineers.map((engineer) => (
+    <MenuItem key={engineer.id} value={engineer.id}>
+      {engineer.full_name || engineer.username}
+    </MenuItem>
+  ))
+) : (
+  <MenuItem value="" disabled>
+    No engineers available
+  </MenuItem>
+)}
+</Select>
+</FormControl>
+</Grid>
+<Grid item xs={12} sm={6}>
+  <FormControl fullWidth>
+    <InputLabel>Status</InputLabel>
+    <Select
+      value={formData.status}
+      label="Status"
+      onChange={(e) => setFormData({ ...formData, status: e.target.value })}
+    >
+      {projectStatuses.map((status) => (
+        <MenuItem key={status.value} value={status.value}>
+          {status.label}
+        </MenuItem>
+      ))}
+
+                 </Select>
                 </FormControl>
               </Grid>
               <Grid item xs={12} sm={6}>
@@ -798,9 +859,6 @@ const handleCreateClient = async () => {
                 />
               </Grid>
             </Grid>
-          
-
-
 
 {/* New Client Dialog */}
       <Dialog open={showNewClientForm} onClose={() => setShowNewClientForm(false)}>
@@ -835,13 +893,36 @@ const handleCreateClient = async () => {
                   onChange={(e) => setNewClientData({ ...newClientData, phone: e.target.value })}
                 />
               </Grid>
+{/* Add Department field */}
+              <Grid item xs={12}>
+                <FormControl fullWidth required>
+                  <InputLabel>Department</InputLabel>
+                  <Select
+                    value={newClientData.department_id}
+                    onChange={(e) => setNewClientData({ ...newClientData, department_id: e.target.value })}
+                    label="Department"
+                    disabled={!isAdmin} // Only admin can change department
+                  >
+                    {Array.isArray(departments) && departments.map(dept => (
+                      <MenuItem key={dept.id} value={dept.id}>
+                        {dept.name}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                  {!isAdmin && (
+                    <FormHelperText>
+                      Client will be created in your department
+                    </FormHelperText>
+                  )}
+                </FormControl>
+              </Grid>
             </Grid>
           </Box>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => {
             setShowNewClientForm(false);
-            setNewClientData({ name: '', email: '', phone: '' });
+           setNewClientData({ name: '', email: '', phone: '', department_id: '' });
           }}>
             Cancel
           </Button>

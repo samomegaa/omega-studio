@@ -305,7 +305,7 @@ exports.updateSettings = async (req, res) => {
         late_mark_after = $3,
         half_day_after = $4
       RETURNING *
-    `, [office_start_time, office_end_time, late_mark_after_, half_day_after]);
+    `, [office_start_time, office_end_time, late_mark_after, half_day_after]);
     
     res.json({ 
       message: 'Settings updated successfully', 

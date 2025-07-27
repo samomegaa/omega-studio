@@ -1,0 +1,74 @@
+exports.getAvailableSlots = async (req, res) => {
+  try {
+    const { date, service_type, duration = 1 } = req.query;
+
+    if (!date || !service_type) {
+      return res.status(400).json({ 
+        message: 'Please provide date and service type' 
+      });
+    }
+
+    // Get studio by type
+    const studioTypeMap = {
+      'recording': 'recording',
+      'photography': 'photography',
+      'outside-recording': 'outside'
+    };
+
+    const studioType = studioTypeMap[service_type];
+    const studioResult = await pool.query(
+      'SELECT id FROM studios WHERE type = $1 AND status = $2 LIMIT 1',
+      [studioType, 'active']
+    );
+
+    if (studioResult.rows.length === 0) {
+      return res.status(400).json({ message: 'Studio not available' });
+    }
+
+    const studio_id = studioResult.rows[0].id;
+
+    // Get all bookings for the date
+    const bookings = await pool.query(
+      `SELECT start_time, end_time, status 
+       FROM bookings 
+       WHERE studio_id = $1 
+       AND DATE(start_time) = DATE($2)
+       AND status IN ('confirmed', 'in-progress', 'pending')
+       ORDER BY start_time`,
+      [studio_id, date]
+    );
+
+    // Generate available slots
+    const slots = [];
+    const slotDuration = parseInt(duration);
+    
+    // Operating hours: 8 AM to 8 PM (configurable)
+    const startHour = 8;
+    const endHour = 20;
+    
+    // For outside recording, we might have different hours
+    const operatingHours = {
+      'recording': { start: 8, end: 20 },
+      'photography': { start: 9, end: 18 },
+      'outside-recording': { start: 6, end: 22 }  // More flexible for events
+    };
+
+    const hours = operatingHours[service_type] || { start: 8, end: 20 };
+
+    for (let hour = hours.start; hour <= hours.end - slotDuration; hour++) {
+      const slotStart = new Date(date);
+      slotStart.setHours(hour, 0, 0, 0);
+      const slotEnd = new Date(slotStart);
+      slotEnd.setHours(hour + slotDuration, 0, 0, 0);
+
+      // Check if slot conflicts with existing bookings
+      let isAvailable = true;
+      for (const booking of bookings.rows) {
+        const bookingStart = new Date(booking.start_time);
+        const bookingEnd = new Date(booking.end_time);
+        
+        // Check for overlap
+        if ((slotStart < bookingEnd && slotEnd > bookingStart)) {
+          isAvailable = false;
+          break;
+        }

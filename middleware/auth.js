@@ -39,44 +39,39 @@ exports.authMiddleware = async (req, res, next) => {
     const user = userResult.rows[0];
     user.roles = user.roles.filter(r => r !== null);
     
-    // Set both formats for backward compatibility
-    req.userId = user.id;
-    req.userRoles = user.roles;
-    req.userRole = user.roles.includes('admin') ? 'admin' : 
-                   user.roles.includes('madmin') ? 'madmin' :
-                   user.roles.includes('engineer') ? 'engineer' :  // Fixed: added closing quote and colon
-                   user.roles.includes('client') ? 'client' : 'staff';
-    
-    // Set req.user for client controller
-    req.user = {
-      id: user.id,
-      username: user.username,
-      email: user.email,
-      full_name: user.full_name,
-      status: user.status,
-      roles: user.roles,
-      role: req.userRole
-    };
-    
+    // Attach user to request
+    req.user = user;
     next();
   } catch (error) {
+    if (error.name === 'JsonWebTokenError') {
+      return res.status(401).json({ message: 'Invalid token' });
+    }
     if (error.name === 'TokenExpiredError') {
       return res.status(401).json({ message: 'Token expired' });
     }
-    return res.status(401).json({ message: 'Invalid token' });
+    console.error('Auth middleware error:', error);
+    return res.status(500).json({ message: 'Authentication error' });
   }
 };
 
-exports.adminMiddleware = (req, res, next) => {
-  if (req.userRole !== 'admin') {
-    return res.status(403).json({ message: 'Admin access required' });
-  }
-  next();
-};
+exports.checkRole = (allowedRoles) => {
+  return (req, res, next) => {
+    // Make sure user is authenticated first
+    if (!req.user) {
+      return res.status(401).json({ message: 'Authentication required' });
+    }
 
-exports.madminMiddleware = (req, res, next) => {
-  if (!['admin', 'madmin'].includes(req.userRole)) {
-    return res.status(403).json({ message: 'Manager access required' });
-  }
-  next();
+    // Check if user has any of the allowed roles
+    const userRoles = req.user.roles || [];
+    const hasRole = allowedRoles.some(role => userRoles.includes(role));
+    
+    if (!hasRole) {
+      return res.status(403).json({ 
+        message: `Access denied. Required roles: ${allowedRoles.join(' or ')}`,
+        userRoles: userRoles
+      });
+    }
+
+    next();
+  };
 };

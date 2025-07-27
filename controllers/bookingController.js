@@ -1,4 +1,5 @@
 const pool = require('../config/db');
+//const { sendBookingEmails } = require('../utils/emailService');
 
 // Get all studios
 exports.getAllStudios = async (req, res) => {
@@ -73,6 +74,49 @@ exports.getBookings = async (req, res) => {
       queryParams.push(studio_id);
       paramCount++;
     }
+
+// Get service packages for a studio
+exports.getServicePackages = async (req, res) => {
+  try {
+    const { service_type } = req.params;
+    
+    // Map service type to studio type
+    const studioTypeMap = {
+      'recording': 'recording',
+      'photography': 'photography',
+      'outside-recording': 'outside'
+    };
+    
+    const studioType = studioTypeMap[service_type];
+console.log('Studio type:', studioType); // ADD THIS    
+if (!studioType) {
+      return res.status(400).json({ message: 'Invalid service type' });
+    }
+    
+    // Get packages for the studio
+    const packages = await pool.query(`
+      SELECT 
+        sp.*,
+        s.name as studio_name,
+        s.type as studio_type
+      FROM service_packages sp
+      JOIN studios s ON sp.studio_id = s.id
+      WHERE s.type = $1 AND sp.is_active = true
+      ORDER BY sp.sort_order
+    `, [studioType]);
+    
+    res.json({
+      service_type,
+      packages: packages.rows
+    });
+    
+  } catch (error) {
+    console.error('Get packages error:', error);
+    res.status(500).json({ message: 'Error fetching service packages' });
+  }
+};
+
+
     
     // Non-admin users only see their own bookings
     const userRoles = user.roles || [user.role] || [];
@@ -93,6 +137,8 @@ exports.getBookings = async (req, res) => {
 
 const result = await pool.query(query, queryParams);
     
+
+
     // Transform to include full timestamps for calendar
     const bookingsWithTimestamps = result.rows.map(booking => {
       // Now date is already in YYYY-MM-DD format
@@ -361,51 +407,341 @@ exports.cancelBooking = async (req, res) => {
   }
 };
 
-// Get available time slots
-exports.getAvailableSlots = async (req, res) => {
-  const { studio_id, date } = req.query;
-  
+
+// Public booking request (for clients)
+exports.createPublicBooking = async (req, res) => {
   try {
-    // Get all bookings for the studio on the given date
-    const bookings = await pool.query(`
-      SELECT start_time, end_time 
-      FROM bookings 
-      WHERE studio_id = $1 
-      AND date = $2::date
-      AND status != 'cancelled'
-      ORDER BY start_time
-    `, [studio_id, date]);
-    
-    // Business hours: 8 AM to 10 PM
-    const businessStart = 8;
-    const businessEnd = 22;
-    const availableSlots = [];
-    
-    let currentHour = businessStart;
-    
-    bookings.rows.forEach(booking => {
-      const bookingStart = parseInt(booking.start_time.split(':')[0]);
-      const bookingEnd = parseInt(booking.end_time.split(':')[0]);
-      
-      if (currentHour < bookingStart) {
-        availableSlots.push({
-          start: currentHour,
-          end: bookingStart
-        });
-      }
-      currentHour = Math.max(currentHour, bookingEnd);
-    });
-    
-    if (currentHour < businessEnd) {
-      availableSlots.push({
-        start: currentHour,
-        end: businessEnd
+    const {
+      service_type, // 'recording', 'photography', 'outside-recording'
+      event_type,   // specific service like 'Wedding Coverage'
+      date,
+      duration,
+      location,
+      notes,
+      client_name,
+      client_email,
+      client_phone
+    } = req.body;
+
+    // Validate required fields
+    if (!service_type || !date || !client_name || !client_email || !client_phone) {
+      return res.status(400).json({ 
+        message: 'Please provide all required information' 
       });
     }
+
+
+
+
+exports.testBooking = async (req, res) => {
+  try {
+    // Test 1: Simple client creation
+    //const client = await pool.query(
+     // "INSERT INTO clients (name, email, phone, created_by_id) VALUES ('Test', 'test@test.com', '1234', NULL) RETURNING id"
+//    );
     
-    res.json(availableSlots);
+    // Test 2: Simple booking creation
+    //const booking = await pool.query(
+     // `INSERT INTO bookings 
+      // (booking_number, client_id, studio_id, department_id, date, start_time, end_time, status, created_by_id) 
+      // VALUES ('TEST123', $1, 6, 2, '2025-07-28', '12:00:00', '14:00:00', 'pending', NULL) 
+      // RETURNING id`,
+     // [client.rows[0].id]
+   // );
+    
+    res.json({ success: true, client_id: client.rows[0].id, booking_id: booking.rows[0].id });
   } catch (error) {
-    console.error('Error fetching available slots:', error);
+    console.error('Test error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+    // Check if client exists or create new
+    let clientResult = await pool.query(
+      'SELECT id FROM clients WHERE email = $1',
+      [client_email]
+    );
+
+    let client_id;
+    
+    if (clientResult.rows.length === 0) {
+      // Create new client
+      const newClient = await pool.query(
+        `INSERT INTO clients (name, email, phone, created_by_id) 
+         VALUES ($1, $2, $3,  NULL) 
+         RETURNING id`,
+        [client_name, client_email, client_phone]
+      );
+      client_id = newClient.rows[0].id;
+    } else {
+      client_id = clientResult.rows[0].id;
+    }
+
+
+// Get studio by type instead of hardcoded ID
+const studioTypeMap = {
+  'recording': 'recording',
+  'photography': 'photography',
+  'outside-recording': 'outside'
+};
+
+const studioType = studioTypeMap[service_type];
+
+// Look up studio ID from database
+const studioResult = await pool.query(
+  'SELECT id FROM studios WHERE type = $1 AND status = $2 LIMIT 1',
+  [studioType, 'active']
+);
+console.log('Studio result:', studioResult.rows); // ADD THIS
+if (studioResult.rows.length === 0) {
+  return res.status(400).json({ message: 'Studio service not available' });
+}
+
+// Get studio ID
+const studio_id = studioResult.rows[0].id;
+
+// Map studio to department (adjust as needed)
+const departmentMap = {
+  5: 1,  // Recording Studio -> Recording Department
+  6: 2,  // Photo Studio -> Photo Department  
+  7: 3   // Outside Recording -> Outside Department
+};
+const department_id = departmentMap[studio_id] || 1;
+
+// Calculate dates and times
+const startDate = new Date(date);
+const endDate = new Date(startDate);
+endDate.setHours(endDate.getHours() + parseInt(duration || 1));
+
+// Format for PostgreSQL
+const bookingDate = startDate.toISOString().split('T')[0]; // YYYY-MM-DD
+const startTime = startDate.toTimeString().split(' ')[0];   // HH:MM:SS
+const endTime = endDate.toTimeString().split(' ')[0];       // HH:MM:SS
+
+// Remove the console.log entirely, or fix it:
+console.log('Query executed successfully');
+
+// Create booking - include booking_number
+const bookingNumber = `BK${Date.now()}${Math.floor(Math.random() * 1000)}`;
+
+const booking = await pool.query(
+  `INSERT INTO bookings 
+   (booking_number, client_id, studio_id, department_id, date, start_time, end_time, status, notes, created_by_id) 
+   VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, NULL) 
+   RETURNING *`,
+  [bookingNumber, client_id, studio_id, department_id, bookingDate, startTime, endTime, 
+   `Event Type: ${event_type}\nLocation: ${location || 'Studio'}\n${notes || ''}`]
+);
+
+    // Send confirmation email (implement based on your email service)
+    
+// Send confirmation emails
+const bookingData = {
+  ...booking.rows[0],
+  service_type,
+  event_type,
+  date,
+  duration,
+  location,
+  notes
+};
+
+const clientData = {
+  name: client_name,
+  email: client_email,
+  phone: client_phone
+};
+
+//await sendBookingEmails(bookingData, clientData);
+// await sendBookingConfirmationEmail(client_email, booking.rows[0]);
+
+    res.status(201).json({
+      message: 'Booking request submitted successfully! We will contact you shortly to confirm.',
+      booking: booking.rows[0]
+    });
+
+  } catch (error) {
+    console.error('Public booking error:', error);
+    res.status(500).json({ message: 'Error creating booking request' });
+  }
+};
+
+
+
+// Get available time slots for a specific date and studio
+exports.getAvailableSlots = async (req, res) => {
+  try {
+    const { date, service_type, duration = 1 } = req.query;
+
+    if (!date || !service_type) {
+      return res.status(400).json({ 
+        message: 'Please provide date and service type' 
+      });
+    }
+
+    // Get studio by type
+    const studioTypeMap = {
+      'recording': 'recording',
+      'photography': 'photography',
+      'outside-recording': 'outside'
+    };
+
+    const studioType = studioTypeMap[service_type];
+    const studioResult = await pool.query(
+      'SELECT id FROM studios WHERE type = $1 AND status = $2 LIMIT 1',
+      [studioType, 'active']
+    );
+
+    if (studioResult.rows.length === 0) {
+      return res.status(400).json({ message: 'Studio not available' });
+    }
+
+    const studio_id = studioResult.rows[0].id;
+
+// Get all bookings for the date
+const bookings = await pool.query(
+  `SELECT start_time, end_time, status 
+   FROM bookings 
+   WHERE studio_id = $1 
+   AND date = $2::date
+   AND status IN ('confirmed', 'in-progress', 'pending')
+   ORDER BY start_time`,
+  [studio_id, date]
+);
+
+console.log('Bookings found:', bookings.rows.length); // ADD THIS
+    // Generate available slots
+    const slots = [];
+    const slotDuration = parseInt(duration);
+    
+    // Operating hours: 8 AM to 8 PM (configurable)
+    const startHour = 8;
+    const endHour = 20;
+    
+    // For outside recording, we might have different hours
+    const operatingHours = {
+      'recording': { start: 8, end: 20 },
+      'photography': { start: 9, end: 18 },
+      'outside-recording': { start: 6, end: 22 }  // More flexible for events
+    };
+
+    const hours = operatingHours[service_type] || { start: 8, end: 20 };
+
+    for (let hour = hours.start; hour <= hours.end - slotDuration; hour++) {
+      const slotStart = new Date(date);
+      slotStart.setHours(hour, 0, 0, 0);
+      const slotEnd = new Date(slotStart);
+      slotEnd.setHours(hour + slotDuration, 0, 0, 0);
+
+      // Check if slot conflicts with existing bookings
+      let isAvailable = true;
+      for (const booking of bookings.rows) {
+        const bookingStart = new Date(booking.start_time);
+        const bookingEnd = new Date(booking.end_time);
+        
+        // Check for overlap
+        if ((slotStart < bookingEnd && slotEnd > bookingStart)) {
+          isAvailable = false;
+          break;
+        }
+      }
+
+      // Check if slot is in the past
+      if (slotStart < new Date()) {
+        isAvailable = false;
+      }
+
+      slots.push({
+        start: slotStart.toISOString(),
+        end: slotEnd.toISOString(),
+        display: `${hour.toString().padStart(2, '0')}:00 - ${(hour + slotDuration).toString().padStart(2, '0')}:00`,
+        available: isAvailable
+      });
+    }
+
+    res.json({ 
+      date: date,
+      service_type: service_type,
+      duration: slotDuration,
+      slots: slots,
+      available_count: slots.filter(s => s.available).length
+    });
+  } catch (error) {
+    console.error('Get available slots error:', error);
     res.status(500).json({ message: 'Error fetching available slots' });
   }
 };
+
+// Get service packages for a studio
+exports.getServicePackages = async (req, res) => {
+  try {
+    const { service_type } = req.params;
+    
+    // Map service type to studio type
+    const studioTypeMap = {
+      'recording': 'recording',
+      'photography': 'photography',
+      'outside-recording': 'outside'
+    };
+    
+    const studioType = studioTypeMap[service_type];
+    if (!studioType) {
+      return res.status(400).json({ message: 'Invalid service type' });
+    }
+    
+    // Get packages for the studio
+    const packages = await pool.query(`
+      SELECT 
+        sp.*,
+        s.name as studio_name,
+        s.type as studio_type
+      FROM service_packages sp
+      JOIN studios s ON sp.studio_id = s.id
+      WHERE s.type = $1 AND sp.is_active = true
+      ORDER BY sp.sort_order
+    `, [studioType]);
+    
+    res.json({
+      service_type,
+      packages: packages.rows
+    });
+    
+  } catch (error) {
+    console.error('Get packages error:', error);
+    res.status(500).json({ message: 'Error fetching service packages' });
+  }
+};
+
+
+// Delete booking - admin only
+exports.deleteBooking = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { user } = req;
+    
+    // Only admin can delete bookings
+    if (!user.roles || !user.roles.includes('admin')) {
+      return res.status(403).json({ 
+        message: 'Access denied. Only administrators can delete bookings.' 
+      });
+    }
+    
+    // Check if booking exists
+    const checkResult = await pool.query(
+      'SELECT id FROM bookings WHERE id = $1',
+      [id]
+    );
+    
+    if (checkResult.rows.length === 0) {
+      return res.status(404).json({ message: 'Booking not found' });
+    }
+    
+    // Delete the booking
+    await pool.query('DELETE FROM bookings WHERE id = $1', [id]);
+    
+    res.json({ message: 'Booking deleted successfully' });
+  } catch (error) {
+    console.error('Delete booking error:', error);
+    res.status(500).json({ message: 'Failed to delete booking' });
+  }
+};
+
